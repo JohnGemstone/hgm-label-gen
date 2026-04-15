@@ -11,7 +11,7 @@ export default function Home() {
           Address label PDF generator
         </h1>
         <p className="text-base leading-7 text-slate-600 sm:text-lg">
-          Upload a customer CSV, review the data, and generate a print-ready PDF
+          Upload a customer CSV, review the data, and generate print-ready PDF
           pack labels.
         </p>
       </div>
