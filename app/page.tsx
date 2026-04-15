@@ -11,8 +11,8 @@ export default function Home() {
           Address label PDF generator
         </h1>
         <p className="text-base leading-7 text-slate-600 sm:text-lg">
-          Upload a customer CSV, review the first sheet in the browser, and
-          generate a print-ready PDF for HGM gold pack address labels.
+          Upload a customer CSV, review the data, and generate a print-ready PDF
+          pack labels.
         </p>
       </div>
 
