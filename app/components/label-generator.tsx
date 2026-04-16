@@ -1,50 +1,66 @@
 "use client";
 
 import Papa from "papaparse";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
+  forwardRef,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
+import {
+  generateFormPdf,
   generateLabelPdf,
   LABEL_LAYOUT_CONFIG,
   prepareLabelsForOutput,
-  REQUIRED_CSV_HEADERS,
+  REQUIRED_CSV_HEADER_DISPLAY_NAMES,
   type PreparedLabelResult,
 } from "@/lib/labels";
 
 type ParsedCsvRow = Record<string, string | undefined>;
 
 export default function LabelGenerator() {
-  const pdfSectionRef = useRef<HTMLElement | null>(null);
+  const generatedLabelsRef = useRef<HTMLElement | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>("");
   const [result, setResult] = useState<PreparedLabelResult | null>(null);
   const [blockingError, setBlockingError] = useState<string | null>(null);
   const [parserWarnings, setParserWarnings] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [pdfFileName, setPdfFileName] = useState("hgm-address-labels.pdf");
+  const [labelPdfUrl, setLabelPdfUrl] = useState<string | null>(null);
+  const [formPdfUrl, setFormPdfUrl] = useState<string | null>(null);
+  const [labelPdfFileName, setLabelPdfFileName] = useState(
+    "hgm-address-labels.pdf",
+  );
+  const [formPdfFileName, setFormPdfFileName] = useState("hgm-pack-forms.pdf");
 
   useEffect(() => {
     return () => {
-      if (pdfUrl) {
-        URL.revokeObjectURL(pdfUrl);
+      if (labelPdfUrl) {
+        URL.revokeObjectURL(labelPdfUrl);
+      }
+
+      if (formPdfUrl) {
+        URL.revokeObjectURL(formPdfUrl);
       }
     };
-  }, [pdfUrl]);
+  }, [formPdfUrl, labelPdfUrl]);
 
   useEffect(() => {
-    if (!pdfUrl) {
+    if (!labelPdfUrl && !formPdfUrl) {
       return;
     }
 
-    pdfSectionRef.current?.scrollIntoView({
+    generatedLabelsRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "start",
     });
-  }, [pdfUrl]);
+  }, [formPdfUrl, labelPdfUrl]);
 
   const hasValidLabels =
     result !== null &&
     result.labels.length > 0 &&
+    result.forms.length > 0 &&
     result.missingHeaders.length === 0 &&
     !blockingError;
 
@@ -60,14 +76,9 @@ export default function LabelGenerator() {
     setBlockingError(null);
     setParserWarnings([]);
     setResult(null);
-    setPdfFileName(buildPdfFileName(file.name));
-    setPdfUrl((currentUrl) => {
-      if (currentUrl) {
-        URL.revokeObjectURL(currentUrl);
-      }
-
-      return null;
-    });
+    setLabelPdfFileName(buildPdfFileName(file.name, "labels"));
+    setFormPdfFileName(buildPdfFileName(file.name, "forms"));
+    resetPdfUrls();
 
     try {
       const csvText = await readFileAsText(file);
@@ -95,7 +106,7 @@ export default function LabelGenerator() {
       }
 
       if (nextResult.labels.length === 0) {
-        setBlockingError("No valid labels were found in this CSV.");
+        setBlockingError("No valid labels or forms were found in this CSV.");
       }
     } catch (error) {
       setBlockingError(
@@ -106,35 +117,66 @@ export default function LabelGenerator() {
     }
   }
 
-  async function handleGeneratePdf() {
-    if (!result || result.labels.length === 0) {
+  async function handleGeneratePdfs() {
+    if (!result || result.labels.length === 0 || result.forms.length === 0) {
       return;
     }
 
     setIsGenerating(true);
     setBlockingError((currentError) =>
-      currentError === "Unable to generate the PDF preview."
+      currentError === "Unable to generate the PDF previews."
         ? null
         : currentError,
     );
 
     try {
-      const pdfBytes = await generateLabelPdf(result.labels);
-      const blob = new Blob([pdfBytes], { type: "application/pdf" });
-      const nextPdfUrl = URL.createObjectURL(blob);
+      const [labelPdfBytes, formPdfBytes] = await Promise.all([
+        generateLabelPdf(result.labels),
+        generateFormPdf(result.forms),
+      ]);
+      const nextLabelPdfUrl = URL.createObjectURL(
+        new Blob([labelPdfBytes], { type: "application/pdf" }),
+      );
+      const nextFormPdfUrl = URL.createObjectURL(
+        new Blob([formPdfBytes], { type: "application/pdf" }),
+      );
 
-      setPdfUrl((currentUrl) => {
+      setLabelPdfUrl((currentUrl) => {
         if (currentUrl) {
           URL.revokeObjectURL(currentUrl);
         }
 
-        return nextPdfUrl;
+        return nextLabelPdfUrl;
+      });
+      setFormPdfUrl((currentUrl) => {
+        if (currentUrl) {
+          URL.revokeObjectURL(currentUrl);
+        }
+
+        return nextFormPdfUrl;
       });
     } catch {
-      setBlockingError("Unable to generate the PDF preview.");
+      setBlockingError("Unable to generate the PDF previews.");
     } finally {
       setIsGenerating(false);
     }
+  }
+
+  function resetPdfUrls() {
+    setLabelPdfUrl((currentUrl) => {
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+
+      return null;
+    });
+    setFormPdfUrl((currentUrl) => {
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+
+      return null;
+    });
   }
 
   return (
@@ -146,7 +188,7 @@ export default function LabelGenerator() {
           </h2>
           <p className="text-sm text-slate-600">
             This runs entirely in the browser. Your CSV stays on the local
-            machine and the PDF is generated client-side.
+            machine and both PDFs are generated client-side.
           </p>
         </div>
 
@@ -159,7 +201,8 @@ export default function LabelGenerator() {
               Select a `.csv` file
             </span>
             <span>
-              Required columns: <code>{REQUIRED_CSV_HEADERS.join(", ")}</code>
+              Required columns:{" "}
+              <code>{REQUIRED_CSV_HEADER_DISPLAY_NAMES.join(", ")}</code>
             </span>
             <input
               id="csv-upload"
@@ -176,7 +219,7 @@ export default function LabelGenerator() {
             data-testid="upload-status"
           >
             {isParsing
-              ? "Parsing CSV and preparing label preview..."
+              ? "Parsing CSV and preparing label and form previews..."
               : selectedFileName
                 ? `Loaded file: ${selectedFileName}`
                 : "No file selected yet."}
@@ -205,16 +248,21 @@ export default function LabelGenerator() {
         <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Job summary</h2>
 
-          <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <dl className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <StatCard
               label="Valid labels"
               value={String(result.labels.length)}
               testId="valid-label-count"
             />
             <StatCard
-              label="PDF pages"
+              label="Label PDF pages"
               value={String(result.pages.length || 0)}
               testId="page-count"
+            />
+            <StatCard
+              label="Form PDF pages"
+              value={String(result.formPageCount)}
+              testId="form-page-count"
             />
             <StatCard
               label="Skipped rows"
@@ -258,17 +306,17 @@ export default function LabelGenerator() {
               Review data
             </h2>
             <p className="text-sm text-slate-600">
-              Check the parsed recipient details before generating the PDF. The
-              final file will place them on an A4{" "}
-              {LABEL_LAYOUT_CONFIG.columns} x {LABEL_LAYOUT_CONFIG.rows} label
-              sheet.
+              Check the parsed recipient details before generating the PDFs. The
+              label output uses an A4 {LABEL_LAYOUT_CONFIG.columns} x{" "}
+              {LABEL_LAYOUT_CONFIG.rows} sheet and the form output creates one
+              A4 page per valid CSV row.
             </p>
           </div>
 
           <button
             type="button"
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-            onClick={handleGeneratePdf}
+            onClick={handleGeneratePdfs}
             disabled={!hasValidLabels || isGenerating || isParsing}
           >
             {isGenerating ? (
@@ -277,10 +325,10 @@ export default function LabelGenerator() {
                   className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
                   aria-hidden="true"
                 />
-                Generating PDF...
+                Generating PDFs...
               </>
             ) : (
-              "Generate PDF"
+              "Generate PDFs"
             )}
           </button>
         </div>
@@ -290,7 +338,7 @@ export default function LabelGenerator() {
             className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"
             aria-live="polite"
           >
-            Building the PDF preview now. This can take a moment for larger CSV
+            Building the PDF previews now. This can take a moment for larger CSV
             files.
           </div>
         ) : null}
@@ -313,10 +361,12 @@ export default function LabelGenerator() {
                   {result.labels.map((label, index) => (
                     <tr key={`${label.name}-${index}`} className="align-top">
                       <td className="px-4 py-3 text-slate-500">{index + 1}</td>
-                      <td className="px-4 py-3 font-medium">{label.name || "No name"}</td>
+                      <td className="px-4 py-3 font-medium">
+                        {label.name || "No name"}
+                      </td>
                       <td className="px-4 py-3 text-slate-700">
                         <p className="break-words">
-                          {label.displayLines.join(", ")}
+                          {formatReviewAddress(label)}
                         </p>
                       </td>
                     </tr>
@@ -328,57 +378,87 @@ export default function LabelGenerator() {
         ) : (
           <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-600">
             Upload a CSV to review the parsed recipients before generating the
-            PDF.
+            PDFs.
           </div>
         )}
       </section>
 
-      {pdfUrl ? (
-        <section
-          ref={pdfSectionRef}
-          className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm"
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Generated PDF
-              </h2>
-              <p className="text-sm text-slate-600">
-                Review the finished sheet below, then download or open it in a
-                new tab for printing.
-              </p>
-            </div>
+      {labelPdfUrl ? (
+        <GeneratedPdfSection
+          ref={generatedLabelsRef}
+          title="Generated Labels"
+          description="Review the finished label sheet below, then download or open it in a new tab for printing."
+          pdfUrl={labelPdfUrl}
+          fileName={labelPdfFileName}
+          testId="label-pdf-preview"
+        />
+      ) : null}
 
-            <div className="flex flex-wrap gap-3">
-              <a
-                className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-50"
-                href={pdfUrl}
-                download={pdfFileName}
-              >
-                Download PDF
-              </a>
-              <a
-                className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-50"
-                href={pdfUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open in new tab
-              </a>
-            </div>
-          </div>
-
-          <iframe
-            title="Generated labels PDF preview"
-            src={pdfUrl}
-            className="mt-5 h-[720px] w-full rounded-xl border border-slate-200"
-            data-testid="pdf-preview"
-          />
-        </section>
+      {formPdfUrl ? (
+        <GeneratedPdfSection
+          title="Generated Forms"
+          description="Review the dynamic form output below, then download or open it in a new tab before printing on the preprinted stock."
+          pdfUrl={formPdfUrl}
+          fileName={formPdfFileName}
+          testId="form-pdf-preview"
+        />
       ) : null}
     </div>
   );
 }
+
+const GeneratedPdfSection = forwardRef<
+  HTMLElement,
+  {
+    title: string;
+    description: string;
+    pdfUrl: string;
+    fileName: string;
+    testId: string;
+  }
+>(function GeneratedPdfSection(
+  { title, description, pdfUrl, fileName, testId },
+  ref,
+) {
+  return (
+    <section
+      ref={ref}
+      className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+          <p className="text-sm text-slate-600">{description}</p>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <a
+            className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-50"
+            href={pdfUrl}
+            download={fileName}
+          >
+            Download PDF
+          </a>
+          <a
+            className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-50"
+            href={pdfUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open in new tab
+          </a>
+        </div>
+      </div>
+
+      <iframe
+        title={`${title} preview`}
+        src={pdfUrl}
+        className="mt-5 h-[720px] w-full rounded-xl border border-slate-200"
+        data-testid={testId}
+      />
+    </section>
+  );
+});
 
 function StatCard({
   label,
@@ -392,17 +472,24 @@ function StatCard({
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <dt className="text-sm text-slate-500">{label}</dt>
-      <dd className="mt-2 text-2xl font-semibold text-slate-900" data-testid={testId}>
+      <dd
+        className="mt-2 text-2xl font-semibold text-slate-900"
+        data-testid={testId}
+      >
         {value}
       </dd>
     </div>
   );
 }
 
-function buildPdfFileName(fileName: string) {
+function formatReviewAddress(label: { lines: string[]; postcode: string }) {
+  return [...label.lines, label.postcode].filter(Boolean).join(", ");
+}
+
+function buildPdfFileName(fileName: string, suffix: string) {
   const baseName = fileName.replace(/\.[^.]+$/, "").trim() || "hgm-address";
 
-  return `${baseName.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase()}-labels.pdf`;
+  return `${baseName.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase()}-${suffix}.pdf`;
 }
 
 async function readFileAsText(file: File) {

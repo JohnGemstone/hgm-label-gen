@@ -1,3 +1,4 @@
+import fontkit from "@pdf-lib/fontkit";
 import {
   PDFDocument,
   PDFPage,
@@ -6,13 +7,56 @@ import {
   rgb,
 } from "pdf-lib";
 
-export const REQUIRED_CSV_HEADERS = [
-  "name",
-  "address line 1",
-  "address line 2",
-  "address line 3",
+const LABEL_REQUIRED_CSV_HEADERS = [
+  "firstname",
+  "lastname",
+  "address1",
+  "address2",
+  "address3",
   "town",
+  "county",
   "postcode",
+] as const;
+
+const FORM_REQUIRED_CSV_HEADERS = [
+  "enquiryid",
+  "price",
+  "9ct",
+  "14ct",
+  "18ct",
+  "22ct",
+  "24ct",
+  "sovereign",
+  "1ozbritiannia",
+  "goldkrugerrand",
+  "returnbydate",
+] as const;
+
+export const REQUIRED_CSV_HEADERS = [
+  ...LABEL_REQUIRED_CSV_HEADERS,
+  ...FORM_REQUIRED_CSV_HEADERS,
+] as const;
+
+export const REQUIRED_CSV_HEADER_DISPLAY_NAMES = [
+  "EnquiryID",
+  "FirstName",
+  "LastName",
+  "Address1",
+  "Address2",
+  "Address3",
+  "Town",
+  "County",
+  "Postcode",
+  "Price",
+  "9ct",
+  "14ct",
+  "18ct",
+  "22ct",
+  "24ct",
+  "Sovereign",
+  "1oz Britiannia",
+  "Gold Krugerrand",
+  "Return By Date",
 ] as const;
 
 export type RequiredCsvHeader = (typeof REQUIRED_CSV_HEADERS)[number];
@@ -23,6 +67,32 @@ export interface AddressLabel {
   postcode: string;
   displayLines: string[];
   warnings: string[];
+}
+
+export interface PreparedFormPrice {
+  label: string;
+  value: string;
+}
+
+export interface PreparedFormCustomerDetails {
+  nameLine: string;
+  addressText: string;
+  postcode: string;
+}
+
+export interface PreparedFormRow {
+  customerDetails: PreparedFormCustomerDetails;
+  enquiryId: string;
+  returnByDate: string;
+  price: PreparedFormPrice;
+  nineCt: string;
+  fourteenCt: string;
+  eighteenCt: string;
+  twentyTwoCt: string;
+  twentyFourCt: string;
+  sovereign: string;
+  britiannia: string;
+  krugerrand: string;
 }
 
 export interface SkippedCsvRow {
@@ -38,6 +108,8 @@ export interface CsvPreparationInput {
 export interface PreparedLabelResult {
   labels: AddressLabel[];
   pages: AddressLabel[][];
+  forms: PreparedFormRow[];
+  formPageCount: number;
   missingHeaders: RequiredCsvHeader[];
   skippedRows: SkippedCsvRow[];
   emptyRowCount: number;
@@ -63,6 +135,48 @@ export interface LabelLayoutConfig {
   borderWidth: number;
 }
 
+type FormFontKey = "regular" | "medium" | "bold";
+
+type FormFontData = Record<FormFontKey, Uint8Array>;
+
+interface GenerateFormPdfOptions {
+  fontData?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>;
+}
+
+interface FormTextStyle {
+  fontKey: FormFontKey;
+  fontSize: number;
+  lineHeight: number;
+  uppercase?: boolean;
+}
+
+interface FormFieldLayout {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  style: FormTextStyle;
+}
+
+interface FormLayoutConfig {
+  pageWidth: number;
+  pageHeight: number;
+  fields: {
+    customerDetails: FormFieldLayout;
+    enquiryId: FormFieldLayout;
+    returnByDate: FormFieldLayout;
+    price: FormFieldLayout;
+    nineCt: FormFieldLayout;
+    fourteenCt: FormFieldLayout;
+    eighteenCt: FormFieldLayout;
+    twentyTwoCt: FormFieldLayout;
+    twentyFourCt: FormFieldLayout;
+    sovereign: FormFieldLayout;
+    britiannia: FormFieldLayout;
+    krugerrand: FormFieldLayout;
+  };
+}
+
 const PAGE_WIDTH_PT = 595.28;
 const PAGE_HEIGHT_PT = 841.89;
 const GRID_COLUMNS = 3;
@@ -74,6 +188,21 @@ const GUTTER_Y = 6;
 const INNER_PADDING = 8;
 const FONT_SIZE = 10;
 const LINE_HEIGHT = 12;
+
+const FORM_FONT_PATHS: Record<FormFontKey, string> = {
+  regular: "/fonts/IBMPlexSans-Regular.ttf",
+  medium: "/fonts/IBMPlexSans-Medium.ttf",
+  bold: "/fonts/IBMPlexSans-Bold.ttf",
+};
+
+const GBP_FORMATTER = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+let cachedFormFontDataPromise: Promise<FormFontData> | null = null;
 
 export const LABEL_LAYOUT_CONFIG: LabelLayoutConfig = {
   pageWidth: PAGE_WIDTH_PT,
@@ -102,15 +231,184 @@ export const LABEL_LAYOUT_CONFIG: LabelLayoutConfig = {
   borderWidth: 0.75,
 };
 
+export const FORM_LAYOUT_CONFIG: FormLayoutConfig = {
+  pageWidth: PAGE_WIDTH_PT,
+  pageHeight: PAGE_HEIGHT_PT,
+  fields: {
+    customerDetails: {
+      left: 33.732,
+      top: 226.772,
+      width: 143.646,
+      height: 57.543,
+      style: {
+        fontKey: "medium",
+        fontSize: 9,
+        lineHeight: 12,
+      },
+    },
+    enquiryId: {
+      left: 33.732,
+      top: 289.134,
+      width: 143.646,
+      height: 12.047,
+      style: {
+        fontKey: "bold",
+        fontSize: 9,
+        lineHeight: 13,
+      },
+    },
+    returnByDate: {
+      left: 355.039,
+      top: 293.669,
+      width: 92.835,
+      height: 11.906,
+      style: {
+        fontKey: "medium",
+        fontSize: 7.2,
+        lineHeight: 12,
+        uppercase: true,
+      },
+    },
+    price: {
+      left: 440.433,
+      top: 293.669,
+      width: 113.953,
+      height: 11.906,
+      style: {
+        fontKey: "medium",
+        fontSize: 7.2,
+        lineHeight: 12,
+        uppercase: true,
+      },
+    },
+    nineCt: {
+      left: 200.976,
+      top: 265.89,
+      width: 31.748,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+    fourteenCt: {
+      left: 235.843,
+      top: 265.89,
+      width: 31.748,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+    eighteenCt: {
+      left: 270.709,
+      top: 265.89,
+      width: 31.748,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+    twentyTwoCt: {
+      left: 305.575,
+      top: 265.89,
+      width: 31.748,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+    twentyFourCt: {
+      left: 340.441,
+      top: 265.89,
+      width: 31.748,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+    sovereign: {
+      left: 381.26,
+      top: 265.89,
+      width: 50.173,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+    britiannia: {
+      left: 440.504,
+      top: 265.89,
+      width: 50.173,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+    krugerrand: {
+      left: 509.102,
+      top: 265.89,
+      width: 50.173,
+      height: 14.173,
+      style: {
+        fontKey: "medium",
+        fontSize: 8,
+        lineHeight: 12,
+      },
+    },
+  },
+};
+
 export const LABELS_PER_PAGE =
   LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows;
 
 export function normalizeCsvHeader(header: string): string {
-  return header.trim().toLowerCase().replace(/[_\s]+/g, " ");
+  return header.trim().toLowerCase().replace(/[\s_-]+/g, "");
 }
 
-export function normalizeCsvValue(value: string | undefined): string {
-  return (value ?? "").replace(/\r?\n/g, " ").trim();
+export function normalizeCsvValue(value: string | number | boolean | undefined | null): string {
+  return String(value ?? "")
+    .replace(/\r?\n/g, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/\u2028/g, " ")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function formatUkPostcode(value: string): string {
+  const compact = value.toUpperCase().replace(/\s+/g, "").trim();
+
+  if (!compact) {
+    return "";
+  }
+
+  if (compact.length >= 5 && compact.length <= 7) {
+    return `${compact.slice(0, -3)} ${compact.slice(-3)}`;
+  }
+
+  return value.toUpperCase().replace(/\s+/g, " ").trim();
+}
+
+export function formatLabelText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[a-z]+(?:'[a-z]+)*/g, (segment) => {
+      return `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`;
+    });
 }
 
 export function findMissingRequiredHeaders(headers: string[]): RequiredCsvHeader[] {
@@ -140,6 +438,8 @@ export async function prepareLabelsForOutput(
     return {
       labels: [],
       pages: [],
+      forms: [],
+      formPageCount: 0,
       missingHeaders,
       skippedRows: [],
       emptyRowCount: 0,
@@ -151,6 +451,7 @@ export async function prepareLabelsForOutput(
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const labels: AddressLabel[] = [];
+  const forms: PreparedFormRow[] = [];
   const skippedRows: SkippedCsvRow[] = [];
   let emptyRowCount = 0;
 
@@ -173,6 +474,7 @@ export async function prepareLabelsForOutput(
     }
 
     labels.push(label);
+    forms.push(createPreparedFormRow(normalizedRow));
   }
 
   const pages = paginateLabels(labels);
@@ -184,6 +486,8 @@ export async function prepareLabelsForOutput(
   return {
     labels,
     pages,
+    forms,
+    formPageCount: forms.length,
     missingHeaders: [],
     skippedRows,
     emptyRowCount,
@@ -235,6 +539,34 @@ export async function generateLabelPdf(
   return new Uint8Array(pdfBytes).buffer as ArrayBuffer;
 }
 
+export async function generateFormPdf(
+  forms: PreparedFormRow[],
+  options: GenerateFormPdfOptions = {},
+): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
+
+  const formFonts = await embedFormFonts(pdf, options.fontData);
+  const pagesToRender = forms.length === 0 ? [null] : forms;
+
+  for (const form of pagesToRender) {
+    const page = pdf.addPage([
+      FORM_LAYOUT_CONFIG.pageWidth,
+      FORM_LAYOUT_CONFIG.pageHeight,
+    ]);
+
+    if (!form) {
+      continue;
+    }
+
+    drawFormPage(page, form, formFonts);
+  }
+
+  const pdfBytes = await pdf.save();
+
+  return new Uint8Array(pdfBytes).buffer as ArrayBuffer;
+}
+
 function normalizeCsvRow(
   row: Record<string, string | undefined>,
 ): Record<string, string> {
@@ -255,17 +587,24 @@ function createAddressLabel(
   row: Record<string, string>,
   font: PDFFont,
 ): AddressLabel | null {
-  const name = row.name ?? "";
+  const name = formatLabelText(
+    [row.firstname ?? "", row.lastname ?? ""]
+      .filter(Boolean)
+      .join(" ")
+      .trim(),
+  );
   const addressLines = [
-    row["address line 1"] ?? "",
-    row["address line 2"] ?? "",
-    row["address line 3"] ?? "",
+    row.address1 ?? "",
+    row.address2 ?? "",
+    row.address3 ?? "",
     row.town ?? "",
-  ].filter(Boolean);
-  const postcode = row.postcode ?? "";
+  ]
+    .filter(Boolean)
+    .map(formatLabelText);
+  const postcode = formatUkPostcode(row.postcode ?? "");
   const destinationLineCount = addressLines.length + (postcode ? 1 : 0);
 
-  if (destinationLineCount === 0) {
+  if (name.length === 0 || destinationLineCount === 0) {
     return null;
   }
 
@@ -300,6 +639,327 @@ function createAddressLabel(
     displayLines,
     warnings,
   };
+}
+
+function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
+  const customerName = formatLabelText(
+    [row.firstname ?? "", row.lastname ?? ""]
+      .filter(Boolean)
+      .join(" ")
+      .trim(),
+  );
+  const addressText = [
+    row.address1 ?? "",
+    row.address2 ?? "",
+    row.address3 ?? "",
+    row.town ?? "",
+    row.county ?? "",
+  ]
+    .filter(Boolean)
+    .map(formatLabelText)
+    .join(", ");
+
+  return {
+    customerDetails: {
+      nameLine: customerName ? `${customerName},` : "",
+      addressText,
+      postcode: formatUkPostcode(row.postcode ?? ""),
+    },
+    enquiryId: formatEnquiryId(row.enquiryid ?? ""),
+    returnByDate: formatReturnByDate(row.returnbydate ?? ""),
+    price: {
+      label: "Insurance Value",
+      value: formatCurrency(row.price ?? ""),
+    },
+    nineCt: formatCurrency(row["9ct"] ?? ""),
+    fourteenCt: formatCurrency(row["14ct"] ?? ""),
+    eighteenCt: formatCurrency(row["18ct"] ?? ""),
+    twentyTwoCt: formatCurrency(row["22ct"] ?? ""),
+    twentyFourCt: formatCurrency(row["24ct"] ?? ""),
+    sovereign: formatCurrency(row.sovereign ?? ""),
+    britiannia: formatCurrency(row["1ozbritiannia"] ?? ""),
+    krugerrand: formatCurrency(row.goldkrugerrand ?? ""),
+  };
+}
+
+function formatEnquiryId(value: string): string {
+  return value ? `Customer ID: ${value}` : "";
+}
+
+function formatCurrency(value: string): string {
+  const normalized = value.replace(/[^\d,.-]/g, "").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  const numericValue = Number.parseFloat(normalized.replace(/,/g, ""));
+
+  if (Number.isNaN(numericValue)) {
+    return value.trim();
+  }
+
+  return GBP_FORMATTER.format(numericValue);
+}
+
+function formatReturnByDate(value: string): string {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return "";
+  }
+
+  const date = parseDateValue(trimmedValue);
+
+  if (!date) {
+    return trimmedValue;
+  }
+
+  const weekday = ["Sun", "Mon", "Tues", "Wed", "Thurs", "Fri", "Sat"][
+    date.getUTCDay()
+  ];
+  const month = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ][date.getUTCMonth()];
+  const day = date.getUTCDate();
+  const year = String(date.getUTCFullYear()).slice(-2);
+
+  return `${weekday} ${day}${getOrdinalSuffix(day)} ${month} ${year}`;
+}
+
+function parseDateValue(value: string): Date | null {
+  const ukDateMatch = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+
+  if (ukDateMatch) {
+    const [, dayPart, monthPart, yearPart] = ukDateMatch;
+    const year = yearPart.length === 2 ? Number(`20${yearPart}`) : Number(yearPart);
+    const month = Number(monthPart);
+    const day = Number(dayPart);
+
+    return new Date(Date.UTC(year, month - 1, day));
+  }
+
+  const parsedValue = Date.parse(value);
+
+  if (Number.isNaN(parsedValue)) {
+    return null;
+  }
+
+  return new Date(parsedValue);
+}
+
+function getOrdinalSuffix(day: number): string {
+  if (day >= 11 && day <= 13) {
+    return "th";
+  }
+
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+async function embedFormFonts(
+  pdf: PDFDocument,
+  fontDataOverride?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>,
+): Promise<Record<FormFontKey, PDFFont>> {
+  const fontData = await resolveFormFontData(fontDataOverride);
+
+  return {
+    regular: await pdf.embedFont(fontData.regular),
+    medium: await pdf.embedFont(fontData.medium),
+    bold: await pdf.embedFont(fontData.bold),
+  };
+}
+
+async function resolveFormFontData(
+  fontDataOverride?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>,
+): Promise<FormFontData> {
+  if (
+    fontDataOverride?.regular &&
+    fontDataOverride.medium &&
+    fontDataOverride.bold
+  ) {
+    return {
+      regular: toUint8Array(fontDataOverride.regular),
+      medium: toUint8Array(fontDataOverride.medium),
+      bold: toUint8Array(fontDataOverride.bold),
+    };
+  }
+
+  if (!cachedFormFontDataPromise) {
+    cachedFormFontDataPromise = loadFormFontData();
+  }
+
+  return cachedFormFontDataPromise;
+}
+
+async function loadFormFontData(): Promise<FormFontData> {
+  const entries = await Promise.all(
+    Object.entries(FORM_FONT_PATHS).map(async ([fontKey, fontPath]) => {
+      const response = await fetch(fontPath);
+
+      if (!response.ok) {
+        throw new Error(`Unable to load form font: ${fontPath}`);
+      }
+
+      return [fontKey, new Uint8Array(await response.arrayBuffer())] as const;
+    }),
+  );
+
+  return Object.fromEntries(entries) as FormFontData;
+}
+
+function toUint8Array(value: ArrayBuffer | Uint8Array): Uint8Array {
+  return value instanceof Uint8Array ? value : new Uint8Array(value);
+}
+
+function drawFormPage(
+  page: PDFPage,
+  form: PreparedFormRow,
+  fonts: Record<FormFontKey, PDFFont>,
+) {
+  const { fields } = FORM_LAYOUT_CONFIG;
+
+  drawCustomerDetails(page, form.customerDetails, fields.customerDetails, fonts);
+  drawSingleLineField(page, form.enquiryId, fields.enquiryId, fonts);
+  drawSingleLineField(page, form.returnByDate, fields.returnByDate, fonts);
+  drawPriceField(page, form.price, fields.price, fonts);
+  drawSingleLineField(page, form.nineCt, fields.nineCt, fonts);
+  drawSingleLineField(page, form.fourteenCt, fields.fourteenCt, fonts);
+  drawSingleLineField(page, form.eighteenCt, fields.eighteenCt, fonts);
+  drawSingleLineField(page, form.twentyTwoCt, fields.twentyTwoCt, fonts);
+  drawSingleLineField(page, form.twentyFourCt, fields.twentyFourCt, fonts);
+  drawSingleLineField(page, form.sovereign, fields.sovereign, fonts);
+  drawSingleLineField(page, form.britiannia, fields.britiannia, fonts);
+  drawSingleLineField(page, form.krugerrand, fields.krugerrand, fonts);
+}
+
+function drawCustomerDetails(
+  page: PDFPage,
+  details: PreparedFormCustomerDetails,
+  layout: FormFieldLayout,
+  fonts: Record<FormFontKey, PDFFont>,
+) {
+  const font = fonts[layout.style.fontKey];
+  const lines = [
+    details.nameLine,
+    ...wrapTextToWidth(
+      details.addressText,
+      font,
+      layout.style.fontSize,
+      layout.width,
+    ),
+    details.postcode,
+  ].filter(Boolean);
+  const maxLines = Math.max(1, Math.floor(layout.height / layout.style.lineHeight));
+  let renderedLines = lines;
+
+  if (lines.length > maxLines) {
+    renderedLines = lines.slice(0, maxLines);
+    renderedLines[renderedLines.length - 1] = ellipsizeTextToWidth(
+      renderedLines[renderedLines.length - 1],
+      font,
+      layout.style.fontSize,
+      layout.width,
+    );
+  }
+
+  for (const [index, line] of renderedLines.entries()) {
+    drawText(page, line, layout.left, layout.top, layout.style, font, index);
+  }
+}
+
+function drawPriceField(
+  page: PDFPage,
+  price: PreparedFormPrice,
+  layout: FormFieldLayout,
+  fonts: Record<FormFontKey, PDFFont>,
+) {
+  const labelFont = fonts.bold;
+  const valueFont = fonts[layout.style.fontKey];
+  const transformedLabel = applyTextTransform(price.label, layout.style);
+  const transformedValue = applyTextTransform(price.value, layout.style);
+  const y = toPdfY(layout.top, layout.style.fontSize);
+
+  page.drawText(transformedLabel, {
+    x: layout.left,
+    y,
+    size: layout.style.fontSize,
+    font: labelFont,
+    color: rgb(0, 0, 0),
+  });
+
+  page.drawText(transformedValue, {
+    x:
+      layout.left +
+      measureTextWidth(transformedLabel, labelFont, layout.style.fontSize) +
+      3,
+    y,
+    size: layout.style.fontSize,
+    font: valueFont,
+    color: rgb(0, 0, 0),
+  });
+}
+
+function drawSingleLineField(
+  page: PDFPage,
+  value: string,
+  layout: FormFieldLayout,
+  fonts: Record<FormFontKey, PDFFont>,
+) {
+  const font = fonts[layout.style.fontKey];
+  const transformedValue = ellipsizeTextToWidth(
+    applyTextTransform(value, layout.style),
+    font,
+    layout.style.fontSize,
+    layout.width,
+  );
+
+  drawText(page, transformedValue, layout.left, layout.top, layout.style, font);
+}
+
+function drawText(
+  page: PDFPage,
+  value: string,
+  left: number,
+  top: number,
+  style: FormTextStyle,
+  font: PDFFont,
+  lineIndex = 0,
+) {
+  page.drawText(applyTextTransform(value, style), {
+    x: left,
+    y: toPdfY(top, style.fontSize) - lineIndex * style.lineHeight,
+    size: style.fontSize,
+    font,
+    color: rgb(0, 0, 0),
+  });
+}
+
+function applyTextTransform(value: string, style: FormTextStyle): string {
+  return style.uppercase ? value.toUpperCase() : value;
+}
+
+function toPdfY(top: number, fontSize: number): number {
+  return FORM_LAYOUT_CONFIG.pageHeight - top - fontSize;
 }
 
 function wrapTextToWidth(

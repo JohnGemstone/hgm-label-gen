@@ -8,11 +8,11 @@ export default function Home() {
           Hatton Garden Metals
         </p>
         <h1 className="text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">
-          Address label PDF generator
+          Label and form PDF generator
         </h1>
         <p className="text-base leading-7 text-slate-600 sm:text-lg">
-          Upload a customer CSV, review the data, and generate print-ready PDF
-          pack labels.
+          Upload a customer CSV, review the data, and generate print-ready label
+          sheets plus form overlays from the same file.
         </p>
       </div>
 
