@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ReactNode,
 } from "react";
 import {
   generateFormPdf,
@@ -315,7 +316,7 @@ export default function LabelGenerator() {
 
           <button
             type="button"
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
             onClick={handleGeneratePdfs}
             disabled={!hasValidLabels || isGenerating || isParsing}
           >
@@ -397,7 +398,21 @@ export default function LabelGenerator() {
       {formPdfUrl ? (
         <GeneratedPdfSection
           title="Generated Forms"
-          description="Review the dynamic form output below, then download or open it in a new tab before printing on the preprinted stock."
+          description={
+            <>
+              Review the dynamic form output below, then download or open it in
+              a new tab before printing on the{" "}
+              <a
+                className="font-medium text-slate-800 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-950 hover:decoration-slate-500"
+                href="/hgm-pack-form-26.pdf"
+                target="_blank"
+                rel="noreferrer"
+              >
+                preprinted stock
+              </a>
+              .
+            </>
+          }
           pdfUrl={formPdfUrl}
           fileName={formPdfFileName}
           testId="form-pdf-preview"
@@ -411,7 +426,7 @@ const GeneratedPdfSection = forwardRef<
   HTMLElement,
   {
     title: string;
-    description: string;
+    description: ReactNode;
     pdfUrl: string;
     fileName: string;
     testId: string;
@@ -428,7 +443,7 @@ const GeneratedPdfSection = forwardRef<
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-          <p className="text-sm text-slate-600">{description}</p>
+          <p className="max-w-2xl text-sm text-slate-600">{description}</p>
         </div>
 
         <div className="flex flex-wrap gap-3">
