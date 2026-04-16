@@ -92,7 +92,7 @@ describe("label utilities", () => {
       "SW1A 2AA",
     ]);
     expect(result.forms[0]).toMatchObject({
-      enquiryId: "Customer ID: 449587",
+      enquiryId: "Enquiry ID: 449587",
       returnByDate: "Mon 20th Apr 26",
       price: {
         label: "Insurance Value",

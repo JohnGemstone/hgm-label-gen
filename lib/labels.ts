@@ -682,7 +682,7 @@ function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
 }
 
 function formatEnquiryId(value: string): string {
-  return value ? `Customer ID: ${value}` : "";
+  return value ? `Enquiry ID: ${value}` : "";
 }
 
 function formatCurrency(value: string): string {
