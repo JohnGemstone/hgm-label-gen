@@ -76,7 +76,7 @@ export interface PreparedFormPrice {
 
 export interface PreparedFormCustomerDetails {
   nameLine: string;
-  addressText: string;
+  addressLines: string[];
   postcode: string;
 }
 
@@ -648,7 +648,7 @@ function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
       .join(" ")
       .trim(),
   );
-  const addressText = [
+  const addressLines = [
     row.address1 ?? "",
     row.address2 ?? "",
     row.address3 ?? "",
@@ -656,13 +656,12 @@ function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
     row.county ?? "",
   ]
     .filter(Boolean)
-    .map(formatLabelText)
-    .join(", ");
+    .map(formatLabelText);
 
   return {
     customerDetails: {
       nameLine: customerName ? `${customerName},` : "",
-      addressText,
+      addressLines,
       postcode: formatUkPostcode(row.postcode ?? ""),
     },
     enquiryId: formatEnquiryId(row.enquiryid ?? ""),
@@ -861,28 +860,13 @@ function drawCustomerDetails(
   const font = fonts[layout.style.fontKey];
   const lines = [
     details.nameLine,
-    ...wrapTextToWidth(
-      details.addressText,
-      font,
-      layout.style.fontSize,
-      layout.width,
+    ...details.addressLines.flatMap((line) =>
+      wrapTextToWidth(line, font, layout.style.fontSize, layout.width),
     ),
     details.postcode,
   ].filter(Boolean);
-  const maxLines = Math.max(1, Math.floor(layout.height / layout.style.lineHeight));
-  let renderedLines = lines;
 
-  if (lines.length > maxLines) {
-    renderedLines = lines.slice(0, maxLines);
-    renderedLines[renderedLines.length - 1] = ellipsizeTextToWidth(
-      renderedLines[renderedLines.length - 1],
-      font,
-      layout.style.fontSize,
-      layout.width,
-    );
-  }
-
-  for (const [index, line] of renderedLines.entries()) {
+  for (const [index, line] of lines.entries()) {
     drawText(page, line, layout.left, layout.top, layout.style, font, index);
   }
 }
@@ -926,14 +910,8 @@ function drawSingleLineField(
   fonts: Record<FormFontKey, PDFFont>,
 ) {
   const font = fonts[layout.style.fontKey];
-  const transformedValue = ellipsizeTextToWidth(
-    applyTextTransform(value, layout.style),
-    font,
-    layout.style.fontSize,
-    layout.width,
-  );
 
-  drawText(page, transformedValue, layout.left, layout.top, layout.style, font);
+  drawText(page, value, layout.left, layout.top, layout.style, font);
 }
 
 function drawText(

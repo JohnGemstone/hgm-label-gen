@@ -103,7 +103,7 @@ describe("label utilities", () => {
     });
     expect(result.forms[0]?.customerDetails).toMatchObject({
       nameLine: "Alice Example,",
-      addressText: "10 Downing Street, Rawcliffe, York",
+      addressLines: ["10 Downing Street", "Rawcliffe, York"],
       postcode: "SW1A 2AA",
     });
   });
