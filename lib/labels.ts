@@ -143,6 +143,15 @@ interface GenerateFormPdfOptions {
   fontData?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>;
 }
 
+interface GenerateLabelPdfOptions {
+  fontData?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>;
+}
+
+interface LabelFonts {
+  name: PDFFont;
+  address: PDFFont;
+}
+
 interface FormTextStyle {
   fontKey: FormFontKey;
   fontSize: number;
@@ -180,14 +189,23 @@ interface FormLayoutConfig {
 const PAGE_WIDTH_PT = 595.28;
 const PAGE_HEIGHT_PT = 841.89;
 const GRID_COLUMNS = 3;
-const GRID_ROWS = 8;
-const MARGIN_X = 24;
-const MARGIN_Y = 24;
-const GUTTER_X = 6;
-const GUTTER_Y = 6;
-const INNER_PADDING = 8;
+const GRID_ROWS = 7;
+const CELL_WIDTH_PT = 180;
+const LABEL_AREA_HEIGHT_PT = 761;
+const TOP_OFFSET_PT = 43.5;
+const POINTS_PER_MM = 72 / 25.4;
+const COLUMN_GAPS_PT = [2.5 * POINTS_PER_MM, 8] as const;
+const GUTTER_X = COLUMN_GAPS_PT[0];
+const GUTTER_Y = 0;
+const MARGIN_X =
+  (PAGE_WIDTH_PT -
+    (GRID_COLUMNS * CELL_WIDTH_PT +
+      COLUMN_GAPS_PT.reduce((total, gap) => total + gap, 0))) /
+  2;
+const INNER_PADDING = 12;
 const FONT_SIZE = 10;
 const LINE_HEIGHT = 12;
+const SHOW_LABEL_OUTLINES = false;
 
 const FORM_FONT_PATHS: Record<FormFontKey, string> = {
   regular: "/fonts/IBMPlexSans-Regular.ttf",
@@ -210,23 +228,16 @@ export const LABEL_LAYOUT_CONFIG: LabelLayoutConfig = {
   columns: GRID_COLUMNS,
   rows: GRID_ROWS,
   marginX: MARGIN_X,
-  marginY: MARGIN_Y,
+  marginY: TOP_OFFSET_PT,
   gutterX: GUTTER_X,
   gutterY: GUTTER_Y,
-  cellWidth:
-    (PAGE_WIDTH_PT - MARGIN_X * 2 - GUTTER_X * (GRID_COLUMNS - 1)) /
-    GRID_COLUMNS,
-  cellHeight:
-    (PAGE_HEIGHT_PT - MARGIN_Y * 2 - GUTTER_Y * (GRID_ROWS - 1)) / GRID_ROWS,
+  cellWidth: CELL_WIDTH_PT,
+  cellHeight: LABEL_AREA_HEIGHT_PT / GRID_ROWS,
   innerPadding: INNER_PADDING,
   fontSize: FONT_SIZE,
   lineHeight: LINE_HEIGHT,
   maxLines: Math.floor(
-    (
-      (PAGE_HEIGHT_PT - MARGIN_Y * 2 - GUTTER_Y * (GRID_ROWS - 1)) /
-        GRID_ROWS -
-      INNER_PADDING * 2
-    ) / LINE_HEIGHT,
+    (LABEL_AREA_HEIGHT_PT / GRID_ROWS - INNER_PADDING * 2) / LINE_HEIGHT,
   ),
   borderWidth: 0.75,
 };
@@ -376,10 +387,15 @@ export const LABELS_PER_PAGE =
   LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows;
 
 export function normalizeCsvHeader(header: string): string {
-  return header.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return header
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
 }
 
-export function normalizeCsvValue(value: string | number | boolean | undefined | null): string {
+export function normalizeCsvValue(
+  value: string | number | boolean | undefined | null,
+): string {
   return String(value ?? "")
     .replace(/\r?\n/g, " ")
     .replace(/\u00a0/g, " ")
@@ -404,14 +420,14 @@ export function formatUkPostcode(value: string): string {
 }
 
 export function formatLabelText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[a-z]+(?:'[a-z]+)*/g, (segment) => {
-      return `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`;
-    });
+  return value.toLowerCase().replace(/[a-z]+(?:'[a-z]+)*/g, (segment) => {
+    return `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`;
+  });
 }
 
-export function findMissingRequiredHeaders(headers: string[]): RequiredCsvHeader[] {
+export function findMissingRequiredHeaders(
+  headers: string[],
+): RequiredCsvHeader[] {
   const normalizedHeaders = new Set(headers.map(normalizeCsvHeader));
 
   return REQUIRED_CSV_HEADERS.filter(
@@ -498,9 +514,12 @@ export async function prepareLabelsForOutput(
 
 export async function generateLabelPdf(
   labels: AddressLabel[],
+  options: GenerateLabelPdfOptions = {},
 ): Promise<ArrayBuffer> {
   const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  pdf.registerFontkit(fontkit);
+
+  const fonts = await embedLabelFonts(pdf, options.fontData);
   const pages = paginateLabels(labels);
 
   if (pages.length === 0) {
@@ -516,7 +535,7 @@ export async function generateLabelPdf(
     drawGrid(page);
 
     for (const [index, label] of pageLabels.entries()) {
-      const position = getCellPosition(index);
+      const position = getLabelCellPosition(index);
       const baseY =
         position.top -
         LABEL_LAYOUT_CONFIG.innerPadding -
@@ -527,7 +546,7 @@ export async function generateLabelPdf(
           x: position.left + LABEL_LAYOUT_CONFIG.innerPadding,
           y: baseY - lineIndex * LABEL_LAYOUT_CONFIG.lineHeight,
           size: LABEL_LAYOUT_CONFIG.fontSize,
-          font,
+          font: lineIndex === 0 ? fonts.name : fonts.address,
           color: rgb(0.08, 0.08, 0.08),
         });
       }
@@ -588,10 +607,7 @@ function createAddressLabel(
   font: PDFFont,
 ): AddressLabel | null {
   const name = formatLabelText(
-    [row.firstname ?? "", row.lastname ?? ""]
-      .filter(Boolean)
-      .join(" ")
-      .trim(),
+    [row.firstname ?? "", row.lastname ?? ""].filter(Boolean).join(" ").trim(),
   );
   const addressLines = [
     row.address1 ?? "",
@@ -643,10 +659,7 @@ function createAddressLabel(
 
 function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
   const customerName = formatLabelText(
-    [row.firstname ?? "", row.lastname ?? ""]
-      .filter(Boolean)
-      .join(" ")
-      .trim(),
+    [row.firstname ?? "", row.lastname ?? ""].filter(Boolean).join(" ").trim(),
   );
   const addressLines = [
     row.address1 ?? "",
@@ -742,7 +755,8 @@ function parseDateValue(value: string): Date | null {
 
   if (ukDateMatch) {
     const [, dayPart, monthPart, yearPart] = ukDateMatch;
-    const year = yearPart.length === 2 ? Number(`20${yearPart}`) : Number(yearPart);
+    const year =
+      yearPart.length === 2 ? Number(`20${yearPart}`) : Number(yearPart);
     const month = Number(monthPart);
     const day = Number(dayPart);
 
@@ -785,6 +799,18 @@ async function embedFormFonts(
     regular: await pdf.embedFont(fontData.regular),
     medium: await pdf.embedFont(fontData.medium),
     bold: await pdf.embedFont(fontData.bold),
+  };
+}
+
+async function embedLabelFonts(
+  pdf: PDFDocument,
+  fontDataOverride?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>,
+): Promise<LabelFonts> {
+  const fonts = await embedFormFonts(pdf, fontDataOverride);
+
+  return {
+    name: fonts.medium,
+    address: fonts.regular,
   };
 }
 
@@ -837,7 +863,12 @@ function drawFormPage(
 ) {
   const { fields } = FORM_LAYOUT_CONFIG;
 
-  drawCustomerDetails(page, form.customerDetails, fields.customerDetails, fonts);
+  drawCustomerDetails(
+    page,
+    form.customerDetails,
+    fields.customerDetails,
+    fonts,
+  );
   drawSingleLineField(page, form.enquiryId, fields.enquiryId, fonts);
   drawSingleLineField(page, form.returnByDate, fields.returnByDate, fonts);
   drawPriceField(page, form.price, fields.price, fonts);
@@ -1043,10 +1074,14 @@ function ellipsizeTextToWidth(
 }
 
 function drawGrid(page: PDFPage) {
+  if (!SHOW_LABEL_OUTLINES) {
+    return;
+  }
+
   for (let row = 0; row < LABEL_LAYOUT_CONFIG.rows; row += 1) {
     for (let column = 0; column < LABEL_LAYOUT_CONFIG.columns; column += 1) {
       const index = row * LABEL_LAYOUT_CONFIG.columns + column;
-      const position = getCellPosition(index);
+      const position = getLabelCellPosition(index);
 
       page.drawRectangle({
         x: position.left,
@@ -1060,15 +1095,27 @@ function drawGrid(page: PDFPage) {
   }
 }
 
-function getCellPosition(index: number) {
+function getColumnOffset(column: number) {
+  let offset = 0;
+
+  for (let currentColumn = 0; currentColumn < column; currentColumn += 1) {
+    offset += LABEL_LAYOUT_CONFIG.cellWidth;
+
+    if (currentColumn < COLUMN_GAPS_PT.length) {
+      offset += COLUMN_GAPS_PT[currentColumn];
+    }
+  }
+
+  return offset;
+}
+
+export function getLabelCellPosition(index: number) {
   const column = index % LABEL_LAYOUT_CONFIG.columns;
   const row = Math.floor(index / LABEL_LAYOUT_CONFIG.columns);
-  const left =
-    LABEL_LAYOUT_CONFIG.marginX +
-    column * (LABEL_LAYOUT_CONFIG.cellWidth + LABEL_LAYOUT_CONFIG.gutterX);
+  const left = LABEL_LAYOUT_CONFIG.marginX + getColumnOffset(column);
   const top =
     LABEL_LAYOUT_CONFIG.pageHeight -
-    LABEL_LAYOUT_CONFIG.marginY -
+    TOP_OFFSET_PT -
     row * (LABEL_LAYOUT_CONFIG.cellHeight + LABEL_LAYOUT_CONFIG.gutterY);
 
   return {

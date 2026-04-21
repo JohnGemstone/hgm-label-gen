@@ -309,8 +309,7 @@ export default function LabelGenerator() {
             <p className="text-sm text-slate-600">
               Check the parsed recipient details before generating the PDFs. The
               label output uses an A4 {LABEL_LAYOUT_CONFIG.columns} x{" "}
-              {LABEL_LAYOUT_CONFIG.rows} sheet and the form output creates one
-              A4 page per valid CSV row.
+              {LABEL_LAYOUT_CONFIG.rows} sheet with {LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows} labels per page, and the form output creates one A4 page per valid CSV row.
             </p>
           </div>
 

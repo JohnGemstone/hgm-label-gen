@@ -5,8 +5,11 @@ import { describe, expect, test } from "vitest";
 import {
   findMissingRequiredHeaders,
   formatLabelText,
+  getLabelCellPosition,
   formatUkPostcode,
   generateFormPdf,
+  generateLabelPdf,
+  LABELS_PER_PAGE,
   LABEL_LAYOUT_CONFIG,
   normalizeCsvHeader,
   paginateLabels,
@@ -119,7 +122,26 @@ describe("label utilities", () => {
     expect(formatLabelText("rawcliffe, york")).toBe("Rawcliffe, York");
   });
 
-  test("splits labels into pages of twenty four and forms into one page per row", async () => {
+  test("uses the shared 3 x 7 label layout config", () => {
+    expect(LABEL_LAYOUT_CONFIG.columns).toBe(3);
+    expect(LABEL_LAYOUT_CONFIG.rows).toBe(7);
+    expect(LABEL_LAYOUT_CONFIG.cellWidth).toBeCloseTo(180, 6);
+    expect(LABEL_LAYOUT_CONFIG.cellHeight).toBeCloseTo(761 / 7, 6);
+    expect(LABEL_LAYOUT_CONFIG.gutterY).toBe(0);
+    expect(LABELS_PER_PAGE).toBe(21);
+  });
+
+  test("uses the updated asymmetric horizontal gaps between columns", () => {
+    const firstCell = getLabelCellPosition(0);
+    const secondCell = getLabelCellPosition(1);
+    const thirdCell = getLabelCellPosition(2);
+
+    expect(LABEL_LAYOUT_CONFIG.marginX).toBeCloseTo(20.0966929134, 6);
+    expect(secondCell.left - firstCell.left - LABEL_LAYOUT_CONFIG.cellWidth).toBeCloseTo(2.5 * (72 / 25.4), 6);
+    expect(thirdCell.left - secondCell.left - LABEL_LAYOUT_CONFIG.cellWidth).toBeCloseTo(8, 6);
+  });
+
+  test("splits labels into pages of twenty one and forms into one page per row", async () => {
     const rows = Array.from({ length: 25 }, (_, index) => ({
       ...COMPLETE_ROW,
       enquiryid: `${449587 + index}`,
@@ -138,8 +160,8 @@ describe("label utilities", () => {
     expect(result.labels).toHaveLength(25);
     expect(result.forms).toHaveLength(25);
     expect(result.pages).toHaveLength(2);
-    expect(result.pages[0]).toHaveLength(24);
-    expect(result.pages[1]).toHaveLength(1);
+    expect(result.pages[0]).toHaveLength(21);
+    expect(result.pages[1]).toHaveLength(4);
     expect(result.formPageCount).toBe(25);
   });
 
@@ -187,8 +209,43 @@ describe("label utilities", () => {
     const pages = paginateLabels(labels);
 
     expect(pages).toHaveLength(2);
-    expect(pages[0]).toHaveLength(24);
-    expect(pages[1]).toHaveLength(2);
+    expect(pages[0]).toHaveLength(21);
+    expect(pages[1]).toHaveLength(5);
+  });
+
+  test("generates a label PDF using the embedded IBM Plex fonts", async () => {
+    const pdfBytes = await generateLabelPdf(
+      [
+        {
+          name: "Alice Example",
+          lines: ["10 Downing Street", "London"],
+          postcode: "SW1A 2AA",
+          displayLines: [
+            "Alice Example",
+            "10 Downing Street",
+            "London",
+            "SW1A 2AA",
+          ],
+          warnings: [],
+        },
+      ],
+      {
+        fontData: {
+          regular: readFileSync(
+            join(process.cwd(), "public/fonts/IBMPlexSans-Regular.ttf"),
+          ),
+          medium: readFileSync(
+            join(process.cwd(), "public/fonts/IBMPlexSans-Medium.ttf"),
+          ),
+          bold: readFileSync(
+            join(process.cwd(), "public/fonts/IBMPlexSans-Bold.ttf"),
+          ),
+        },
+      },
+    );
+    const pdf = await PDFDocument.load(pdfBytes);
+
+    expect(pdf.getPageCount()).toBe(1);
   });
 
   test("generates a multi-page form PDF with embedded IBM Plex fonts", async () => {
