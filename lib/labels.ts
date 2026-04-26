@@ -77,6 +77,7 @@ export interface PreparedFormPrice {
 export interface PreparedFormCustomerDetails {
   nameLine: string;
   addressLines: string[];
+  countyLine: string;
   postcode: string;
 }
 
@@ -661,12 +662,13 @@ function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
   const customerName = formatLabelText(
     [row.firstname ?? "", row.lastname ?? ""].filter(Boolean).join(" ").trim(),
   );
+  const countyLine = formatLabelText(row.county ?? "");
   const addressLines = [
     row.address1 ?? "",
     row.address2 ?? "",
     row.address3 ?? "",
     row.town ?? "",
-    row.county ?? "",
+    countyLine,
   ]
     .filter(Boolean)
     .map(formatLabelText);
@@ -675,6 +677,7 @@ function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
     customerDetails: {
       nameLine: customerName ? `${customerName},` : "",
       addressLines,
+      countyLine,
       postcode: formatUkPostcode(row.postcode ?? ""),
     },
     enquiryId: formatEnquiryId(row.enquiryid ?? ""),
@@ -889,17 +892,61 @@ function drawCustomerDetails(
   fonts: Record<FormFontKey, PDFFont>,
 ) {
   const font = fonts[layout.style.fontKey];
-  const lines = [
-    details.nameLine,
-    ...details.addressLines.flatMap((line) =>
-      wrapTextToWidth(line, font, layout.style.fontSize, layout.width),
-    ),
-    details.postcode,
-  ].filter(Boolean);
+  const lines = getFormCustomerDetailsLines(details, font, layout);
 
   for (const [index, line] of lines.entries()) {
     drawText(page, line, layout.left, layout.top, layout.style, font, index);
   }
+}
+
+export function getFormCustomerDetailsLines(
+  details: PreparedFormCustomerDetails,
+  font: PDFFont,
+  layout: FormFieldLayout = FORM_LAYOUT_CONFIG.fields.customerDetails,
+): string[] {
+  const maxLineCount = getMaxFormLineCount(layout);
+  const baseAddressLines = details.addressLines;
+  const compactAddressLines = removeCountyLine(
+    details.addressLines,
+    details.countyLine,
+  );
+  const candidateAddressLines = dedupeAddressLineCandidates([
+    baseAddressLines,
+    compactAddressLines,
+    ...buildMergedAddressLineCandidates(compactAddressLines),
+    ...buildMergedAddressLineCandidates(baseAddressLines),
+  ]);
+
+  for (const addressLines of candidateAddressLines) {
+    const renderedLines = buildRenderedCustomerDetailLines(
+      details.nameLine,
+      addressLines,
+      details.postcode,
+      font,
+      layout,
+    );
+
+    if (renderedLines.length <= maxLineCount) {
+      return renderedLines;
+    }
+  }
+
+  const fallbackAddressLines =
+    candidateAddressLines[candidateAddressLines.length - 1] ?? [];
+
+  return truncateCustomerDetailLines(
+    buildRenderedCustomerDetailLines(
+      details.nameLine,
+      fallbackAddressLines,
+      details.postcode,
+      font,
+      layout,
+    ),
+    details.postcode,
+    font,
+    layout,
+    maxLineCount,
+  );
 }
 
 function drawPriceField(
@@ -969,6 +1016,133 @@ function applyTextTransform(value: string, style: FormTextStyle): string {
 
 function toPdfY(top: number, fontSize: number): number {
   return FORM_LAYOUT_CONFIG.pageHeight - top - fontSize;
+}
+
+function buildRenderedCustomerDetailLines(
+  nameLine: string,
+  addressLines: string[],
+  postcode: string,
+  font: PDFFont,
+  layout: FormFieldLayout,
+): string[] {
+  return [
+    nameLine,
+    ...addressLines.flatMap((line) =>
+      wrapTextToWidth(line, font, layout.style.fontSize, layout.width),
+    ),
+    postcode,
+  ].filter(Boolean);
+}
+
+function getMaxFormLineCount(layout: FormFieldLayout): number {
+  return Math.max(
+    1,
+    Math.floor((layout.height - layout.style.fontSize) / layout.style.lineHeight) + 1,
+  );
+}
+
+function removeCountyLine(addressLines: string[], countyLine: string): string[] {
+  if (!countyLine) {
+    return [...addressLines];
+  }
+
+  const countyIndex = addressLines.lastIndexOf(countyLine);
+
+  if (countyIndex === -1) {
+    return [...addressLines];
+  }
+
+  return [
+    ...addressLines.slice(0, countyIndex),
+    ...addressLines.slice(countyIndex + 1),
+  ];
+}
+
+function buildMergedAddressLineCandidates(addressLines: string[]): string[][] {
+  const candidates: string[][] = [];
+  let mergedLines = [...addressLines];
+
+  while (mergedLines.length > 1) {
+    mergedLines = [
+      ...mergedLines.slice(0, -2),
+      joinAddressLines(
+        mergedLines[mergedLines.length - 2] ?? "",
+        mergedLines[mergedLines.length - 1] ?? "",
+      ),
+    ];
+    candidates.push(mergedLines);
+  }
+
+  return candidates;
+}
+
+function joinAddressLines(left: string, right: string): string {
+  if (!left) {
+    return right;
+  }
+
+  if (!right) {
+    return left;
+  }
+
+  if (left.endsWith(",") || right.startsWith(",")) {
+    return `${left} ${right}`;
+  }
+
+  return `${left}, ${right}`;
+}
+
+function dedupeAddressLineCandidates(candidates: string[][]): string[][] {
+  const seen = new Set<string>();
+
+  return candidates.filter((lines) => {
+    const key = lines.join("\u001f");
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function truncateCustomerDetailLines(
+  lines: string[],
+  postcode: string,
+  font: PDFFont,
+  layout: FormFieldLayout,
+  maxLineCount: number,
+): string[] {
+  if (lines.length <= maxLineCount) {
+    return lines;
+  }
+
+  if (postcode && maxLineCount > 1 && lines.at(-1) === postcode) {
+    const visibleLines = lines.slice(0, maxLineCount - 1);
+
+    if (visibleLines.length > 0) {
+      visibleLines[visibleLines.length - 1] = ellipsizeTextToWidth(
+        visibleLines[visibleLines.length - 1] ?? "",
+        font,
+        layout.style.fontSize,
+        layout.width,
+      );
+    }
+
+    return [...visibleLines, postcode];
+  }
+
+  const truncatedLines = lines.slice(0, maxLineCount);
+
+  truncatedLines[truncatedLines.length - 1] = ellipsizeTextToWidth(
+    truncatedLines[truncatedLines.length - 1] ?? "",
+    font,
+    layout.style.fontSize,
+    layout.width,
+  );
+
+  return truncatedLines;
 }
 
 function wrapTextToWidth(

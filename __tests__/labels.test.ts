@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import { describe, expect, test } from "vitest";
 import {
   findMissingRequiredHeaders,
+  FORM_LAYOUT_CONFIG,
   formatLabelText,
   getLabelCellPosition,
+  getFormCustomerDetailsLines,
   formatUkPostcode,
   generateFormPdf,
   generateLabelPdf,
@@ -114,6 +116,43 @@ describe("label utilities", () => {
   test("formats manually entered uk postcodes with no space", () => {
     expect(formatUkPostcode("ts57eg")).toBe("TS5 7EG");
     expect(formatUkPostcode("YO30 5WG")).toBe("YO30 5WG");
+  });
+
+  test("compacts form customer details before they would overflow into the enquiry id", async () => {
+    const result = await prepareLabelsForOutput({
+      headers: [...REQUIRED_CSV_HEADERS],
+      rows: [
+        {
+          ...COMPLETE_ROW,
+          enquiryid: "450646",
+          firstname: "Jaide",
+          lastname: "Carter",
+          address1: "Heartsease",
+          address2: "Thurgarton Road",
+          address3: "Aldborough",
+          town: "Norwich",
+          county: "Norfolk",
+          postcode: "NR11 7NY",
+        },
+      ],
+    });
+
+    const pdf = await PDFDocument.create();
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+
+    const lines = getFormCustomerDetailsLines(
+      result.forms[0]!.customerDetails,
+      font,
+      FORM_LAYOUT_CONFIG.fields.customerDetails,
+    );
+
+    expect(lines).toEqual([
+      "Jaide Carter,",
+      "Heartsease",
+      "Thurgarton Road",
+      "Aldborough, Norwich",
+      "NR11 7NY",
+    ]);
   });
 
   test("capitalizes manually entered names and address text", () => {
