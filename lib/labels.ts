@@ -142,6 +142,7 @@ type FormFontData = Record<FormFontKey, Uint8Array>;
 
 interface GenerateFormPdfOptions {
   fontData?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>;
+  globalOffsetMm?: FormCoordinateOffset;
 }
 
 interface GenerateLabelPdfOptions {
@@ -187,6 +188,13 @@ interface FormLayoutConfig {
   };
 }
 
+type FormFieldName = keyof FormLayoutConfig["fields"];
+
+export interface FormCoordinateOffset {
+  x: number;
+  y: number;
+}
+
 const PAGE_WIDTH_PT = 595.28;
 const PAGE_HEIGHT_PT = 841.89;
 const GRID_COLUMNS = 3;
@@ -207,6 +215,18 @@ const INNER_PADDING = 12;
 const FONT_SIZE = 10;
 const LINE_HEIGHT = 12;
 const SHOW_LABEL_OUTLINES = false;
+export const FORM_GLOBAL_OFFSET_MM: FormCoordinateOffset = {
+  x: 4,
+  y: -1.8,
+};
+const FORM_FIELD_OFFSETS_MM: Partial<
+  Record<FormFieldName, FormCoordinateOffset>
+> = {
+  returnByDate: {
+    x: -6,
+    y: 0,
+  },
+};
 
 const FORM_FONT_PATHS: Record<FormFontKey, string> = {
   regular: "/fonts/IBMPlexSans-Regular.ttf",
@@ -579,7 +599,7 @@ export async function generateFormPdf(
       continue;
     }
 
-    drawFormPage(page, form, formFonts);
+    drawFormPage(page, form, formFonts, options.globalOffsetMm);
   }
 
   const pdfBytes = await pdf.save();
@@ -863,8 +883,9 @@ function drawFormPage(
   page: PDFPage,
   form: PreparedFormRow,
   fonts: Record<FormFontKey, PDFFont>,
+  globalOffsetMm: FormCoordinateOffset = FORM_GLOBAL_OFFSET_MM,
 ) {
-  const { fields } = FORM_LAYOUT_CONFIG;
+  const fields = getResolvedFormFieldLayouts(globalOffsetMm);
 
   drawCustomerDetails(
     page,
@@ -883,6 +904,49 @@ function drawFormPage(
   drawSingleLineField(page, form.sovereign, fields.sovereign, fonts);
   drawSingleLineField(page, form.britiannia, fields.britiannia, fonts);
   drawSingleLineField(page, form.krugerrand, fields.krugerrand, fonts);
+}
+
+function getResolvedFormFieldLayouts(
+  globalOffsetMm: FormCoordinateOffset = FORM_GLOBAL_OFFSET_MM,
+): FormLayoutConfig["fields"] {
+  return {
+    customerDetails: getResolvedFormFieldLayout("customerDetails", globalOffsetMm),
+    enquiryId: getResolvedFormFieldLayout("enquiryId", globalOffsetMm),
+    returnByDate: getResolvedFormFieldLayout("returnByDate", globalOffsetMm),
+    price: getResolvedFormFieldLayout("price", globalOffsetMm),
+    nineCt: getResolvedFormFieldLayout("nineCt", globalOffsetMm),
+    fourteenCt: getResolvedFormFieldLayout("fourteenCt", globalOffsetMm),
+    eighteenCt: getResolvedFormFieldLayout("eighteenCt", globalOffsetMm),
+    twentyTwoCt: getResolvedFormFieldLayout("twentyTwoCt", globalOffsetMm),
+    twentyFourCt: getResolvedFormFieldLayout("twentyFourCt", globalOffsetMm),
+    sovereign: getResolvedFormFieldLayout("sovereign", globalOffsetMm),
+    britiannia: getResolvedFormFieldLayout("britiannia", globalOffsetMm),
+    krugerrand: getResolvedFormFieldLayout("krugerrand", globalOffsetMm),
+  };
+}
+
+export function getResolvedFormFieldLayout(
+  fieldName: FormFieldName,
+  globalOffsetMm: FormCoordinateOffset = FORM_GLOBAL_OFFSET_MM,
+): FormFieldLayout {
+  const layout = FORM_LAYOUT_CONFIG.fields[fieldName];
+  const fieldOffset = FORM_FIELD_OFFSETS_MM[fieldName] ?? { x: 0, y: 0 };
+
+  return offsetFormFieldLayout(layout, {
+    x: globalOffsetMm.x + fieldOffset.x,
+    y: globalOffsetMm.y + fieldOffset.y,
+  });
+}
+
+function offsetFormFieldLayout(
+  layout: FormFieldLayout,
+  offset: FormCoordinateOffset,
+): FormFieldLayout {
+  return {
+    ...layout,
+    left: layout.left + mmToPoints(offset.x),
+    top: layout.top + mmToPoints(offset.y),
+  };
 }
 
 function drawCustomerDetails(
@@ -1016,6 +1080,10 @@ function applyTextTransform(value: string, style: FormTextStyle): string {
 
 function toPdfY(top: number, fontSize: number): number {
   return FORM_LAYOUT_CONFIG.pageHeight - top - fontSize;
+}
+
+function mmToPoints(value: number): number {
+  return value * POINTS_PER_MM;
 }
 
 function buildRenderedCustomerDetailLines(

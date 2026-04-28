@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import * as labelsModule from "@/lib/labels";
@@ -166,7 +166,9 @@ describe("LabelGenerator", () => {
     vi.spyOn(labelsModule, "generateLabelPdf").mockResolvedValue(
       new ArrayBuffer(8),
     );
-    vi.spyOn(labelsModule, "generateFormPdf").mockResolvedValue(new ArrayBuffer(8));
+    const generateFormPdfSpy = vi
+      .spyOn(labelsModule, "generateFormPdf")
+      .mockResolvedValue(new ArrayBuffer(8));
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
       writable: true,
@@ -210,5 +212,108 @@ describe("LabelGenerator", () => {
     ).toBeDefined();
     expect(screen.getByTestId("label-pdf-preview")).toBeDefined();
     expect(screen.getByTestId("form-pdf-preview")).toBeDefined();
+    expect(generateFormPdfSpy).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        globalOffsetMm: { x: 4, y: -1.8 },
+      }),
+    );
+  });
+
+  test("shows editable evaluation form offsets in the options dialog", async () => {
+    const user = userEvent.setup();
+
+    render(<LabelGenerator />);
+
+    await user.click(screen.getByRole("button", { name: /options/i }));
+
+    expect(
+      screen.getByRole("heading", { name: /evaluation form/i }),
+    ).toBeDefined();
+    expect(
+      (screen.getByLabelText(/horizontal offset/i) as HTMLInputElement).value,
+    ).toBe("4");
+    expect(
+      (screen.getByLabelText(/vertical offset/i) as HTMLInputElement).value,
+    ).toBe("-1.8");
+  });
+
+  test("closing the options dialog discards unsaved offset edits", async () => {
+    const user = userEvent.setup();
+
+    render(<LabelGenerator />);
+
+    await user.click(screen.getByRole("button", { name: /options/i }));
+    await user.clear(screen.getByLabelText(/horizontal offset/i));
+    await user.type(screen.getByLabelText(/horizontal offset/i), "6.2");
+    fireEvent.change(screen.getByLabelText(/vertical offset/i), {
+      target: { value: "-2.7" },
+    });
+    await user.click(screen.getByRole("button", { name: /close options/i }));
+    await user.click(screen.getByRole("button", { name: /options/i }));
+
+    expect(
+      (screen.getByLabelText(/horizontal offset/i) as HTMLInputElement).value,
+    ).toBe("4");
+    expect(
+      (screen.getByLabelText(/vertical offset/i) as HTMLInputElement).value,
+    ).toBe("-1.8");
+  });
+
+  test("uses the edited evaluation form offsets when generating forms", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(labelsModule, "generateLabelPdf").mockResolvedValue(
+      new ArrayBuffer(8),
+    );
+    const generateFormPdfSpy = vi
+      .spyOn(labelsModule, "generateFormPdf")
+      .mockResolvedValue(new ArrayBuffer(8));
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      writable: true,
+      value: vi
+        .fn()
+        .mockReturnValueOnce("blob:labels")
+        .mockReturnValueOnce("blob:forms"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
+
+    render(<LabelGenerator />);
+
+    await user.upload(
+      screen.getByLabelText(/select a/i),
+      new File(
+        [[COMPLETE_HEADER, COMPLETE_ROW].join("\n")],
+        "customers.csv",
+        { type: "text/csv" },
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: /options/i }));
+    await user.clear(screen.getByLabelText(/horizontal offset/i));
+    await user.type(screen.getByLabelText(/horizontal offset/i), "5.5");
+    fireEvent.change(screen.getByLabelText(/vertical offset/i), {
+      target: { value: "-2.4" },
+    });
+    await user.click(screen.getByRole("button", { name: /done/i }));
+    await user.click(screen.getByRole("button", { name: /generate pdfs/i }));
+
+    await waitFor(() => {
+      expect(generateFormPdfSpy).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          globalOffsetMm: { x: 5.5, y: -2.4 },
+        }),
+      );
+    });
   });
 });

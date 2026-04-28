@@ -10,11 +10,13 @@ import {
   type ReactNode,
 } from "react";
 import {
+  FORM_GLOBAL_OFFSET_MM,
   generateFormPdf,
   generateLabelPdf,
   LABEL_LAYOUT_CONFIG,
   prepareLabelsForOutput,
   REQUIRED_CSV_HEADER_DISPLAY_NAMES,
+  type FormCoordinateOffset,
   type PreparedLabelResult,
 } from "@/lib/labels";
 
@@ -34,6 +36,11 @@ export default function LabelGenerator() {
     "hgm-address-labels.pdf",
   );
   const [formPdfFileName, setFormPdfFileName] = useState("hgm-pack-forms.pdf");
+  const [isOptionsOpen, setIsOptionsOpen] = useState(false);
+  const [savedFormGlobalOffset, setSavedFormGlobalOffset] =
+    useState<FormCoordinateOffset>(FORM_GLOBAL_OFFSET_MM);
+  const [draftFormGlobalOffset, setDraftFormGlobalOffset] =
+    useState<FormCoordinateOffset>(FORM_GLOBAL_OFFSET_MM);
 
   useEffect(() => {
     return () => {
@@ -133,7 +140,9 @@ export default function LabelGenerator() {
     try {
       const [labelPdfBytes, formPdfBytes] = await Promise.all([
         generateLabelPdf(result.labels),
-        generateFormPdf(result.forms),
+        generateFormPdf(result.forms, {
+          globalOffsetMm: savedFormGlobalOffset,
+        }),
       ]);
       const nextLabelPdfUrl = URL.createObjectURL(
         new Blob([labelPdfBytes], { type: "application/pdf" }),
@@ -178,6 +187,33 @@ export default function LabelGenerator() {
 
       return null;
     });
+  }
+
+  function handleFormOffsetChange(
+    axis: keyof FormCoordinateOffset,
+    value: string,
+  ) {
+    const parsedValue = Number.parseFloat(value);
+
+    setDraftFormGlobalOffset((currentOffset) => ({
+      ...currentOffset,
+      [axis]: Number.isFinite(parsedValue) ? parsedValue : 0,
+    }));
+  }
+
+  function openOptionsDialog() {
+    setDraftFormGlobalOffset(savedFormGlobalOffset);
+    setIsOptionsOpen(true);
+  }
+
+  function closeOptionsDialog() {
+    setDraftFormGlobalOffset(savedFormGlobalOffset);
+    setIsOptionsOpen(false);
+  }
+
+  function saveOptionsDialog() {
+    setSavedFormGlobalOffset(draftFormGlobalOffset);
+    setIsOptionsOpen(false);
   }
 
   return (
@@ -313,24 +349,33 @@ export default function LabelGenerator() {
             </p>
           </div>
 
-          <button
-            type="button"
-            className="inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-            onClick={handleGeneratePdfs}
-            disabled={!hasValidLabels || isGenerating || isParsing}
-          >
-            {isGenerating ? (
-              <>
-                <span
-                  className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
-                  aria-hidden="true"
-                />
-                Generating PDFs...
-              </>
-            ) : (
-              "Generate PDFs"
-            )}
-          </button>
+          <div className="flex shrink-0 flex-col items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              onClick={handleGeneratePdfs}
+              disabled={!hasValidLabels || isGenerating || isParsing}
+            >
+              {isGenerating ? (
+                <>
+                  <span
+                    className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                    aria-hidden="true"
+                  />
+                  Generating PDFs...
+                </>
+              ) : (
+                "Generate PDFs"
+              )}
+            </button>
+            <button
+              type="button"
+              className="text-sm font-medium text-slate-700 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-950 hover:decoration-slate-500"
+              onClick={openOptionsDialog}
+            >
+              Options
+            </button>
+          </div>
         </div>
 
         {isGenerating ? (
@@ -416,6 +461,86 @@ export default function LabelGenerator() {
           fileName={formPdfFileName}
           testId="form-pdf-preview"
         />
+      ) : null}
+
+      {isOptionsOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="evaluation-form-options-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2
+                  id="evaluation-form-options-title"
+                  className="text-lg font-semibold text-slate-900"
+                >
+                  Evaluation Form
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Global offset settings for the preprinted form output.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                onClick={closeOptionsDialog}
+                aria-label="Close options"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <label className="block text-sm text-slate-700">
+                <span className="font-medium text-slate-900">
+                  Horizontal offset (mm)
+                </span>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={draftFormGlobalOffset.x}
+                  onChange={(event) =>
+                    handleFormOffsetChange("x", event.target.value)
+                  }
+                  className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+
+              <label className="block text-sm text-slate-700">
+                <span className="font-medium text-slate-900">
+                  Vertical offset (mm)
+                </span>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={draftFormGlobalOffset.y}
+                  onChange={(event) =>
+                    handleFormOffsetChange("y", event.target.value)
+                  }
+                  className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+            </div>
+
+            <p className="mt-4 text-xs text-slate-500">
+              Positive horizontal values move right. Negative vertical values
+              move up.
+            </p>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-50"
+                onClick={saveOptionsDialog}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

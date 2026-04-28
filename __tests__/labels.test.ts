@@ -4,10 +4,12 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { describe, expect, test } from "vitest";
 import {
   findMissingRequiredHeaders,
+  FORM_GLOBAL_OFFSET_MM,
   FORM_LAYOUT_CONFIG,
   formatLabelText,
   getLabelCellPosition,
   getFormCustomerDetailsLines,
+  getResolvedFormFieldLayout,
   formatUkPostcode,
   generateFormPdf,
   generateLabelPdf,
@@ -153,6 +155,25 @@ describe("label utilities", () => {
       "Aldborough, Norwich",
       "NR11 7NY",
     ]);
+  });
+
+  test("applies the global form offset and the delivery-date adjustment", () => {
+    const customerDetails = getResolvedFormFieldLayout("customerDetails");
+    const returnByDate = getResolvedFormFieldLayout("returnByDate");
+
+    expect(FORM_GLOBAL_OFFSET_MM).toEqual({ x: 4, y: -1.8 });
+    expect(
+      customerDetails.left - FORM_LAYOUT_CONFIG.fields.customerDetails.left,
+    ).toBeCloseTo(4 * (72 / 25.4), 6);
+    expect(
+      customerDetails.top - FORM_LAYOUT_CONFIG.fields.customerDetails.top,
+    ).toBeCloseTo(-1.8 * (72 / 25.4), 6);
+    expect(
+      returnByDate.left - FORM_LAYOUT_CONFIG.fields.returnByDate.left,
+    ).toBeCloseTo(-2 * (72 / 25.4), 6);
+    expect(
+      returnByDate.top - FORM_LAYOUT_CONFIG.fields.returnByDate.top,
+    ).toBeCloseTo(-1.8 * (72 / 25.4), 6);
   });
 
   test("capitalizes manually entered names and address text", () => {
