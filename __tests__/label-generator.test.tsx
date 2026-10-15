@@ -48,6 +48,21 @@ const COMPLETE_ROW = [
   "20/04/2026",
 ].join(",");
 
+const VALUATION_HEADER = COMPLETE_HEADER.split(",").slice(0, 10).join(",");
+
+const VALUATION_ROW = [
+  "449587",
+  "Alice",
+  "Example",
+  "10 Downing Street",
+  "",
+  "",
+  "London",
+  "",
+  "SW1A 2AA",
+  "750.0000",
+].join(",");
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -215,9 +230,47 @@ describe("LabelGenerator", () => {
     expect(generateFormPdfSpy).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({
-        globalOffsetMm: { x: 4, y: -1.8 },
+        layout: "valuation",
+        globalOffsetMm: { x: 0, y: 0 },
       }),
     );
+  });
+
+  test("accepts a CSV without the legacy price columns for the default layout", async () => {
+    const user = userEvent.setup();
+
+    render(<LabelGenerator />);
+
+    await user.upload(
+      screen.getByLabelText(/select a/i),
+      new File(
+        [[VALUATION_HEADER, VALUATION_ROW].join("\n")],
+        "valuation.csv",
+        { type: "text/csv" },
+      ),
+    );
+
+    const generateButton = screen.getByRole("button", {
+      name: /generate pdfs/i,
+    }) as HTMLButtonElement;
+
+    await waitFor(() => {
+      expect(generateButton.disabled).toBe(false);
+    });
+
+    await user.click(screen.getByRole("button", { name: /options/i }));
+    await user.selectOptions(
+      screen.getByLabelText(/form layout/i),
+      "legacy",
+    );
+    await user.click(screen.getByRole("button", { name: /done/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/missing required columns: 9ct, 14ct/i),
+      ).toBeDefined();
+    });
+    expect(generateButton.disabled).toBe(true);
   });
 
   test("shows editable evaluation form offsets in the options dialog", async () => {
@@ -230,6 +283,21 @@ describe("LabelGenerator", () => {
     expect(
       screen.getByRole("heading", { name: /evaluation form/i }),
     ).toBeDefined();
+    expect(
+      (screen.getByLabelText(/form layout/i) as HTMLSelectElement).value,
+    ).toBe("valuation");
+    expect(
+      (screen.getByLabelText(/horizontal offset/i) as HTMLInputElement).value,
+    ).toBe("0");
+    expect(
+      (screen.getByLabelText(/vertical offset/i) as HTMLInputElement).value,
+    ).toBe("0");
+
+    await user.selectOptions(
+      screen.getByLabelText(/form layout/i),
+      "legacy",
+    );
+
     expect(
       (screen.getByLabelText(/horizontal offset/i) as HTMLInputElement).value,
     ).toBe("4");
@@ -254,10 +322,10 @@ describe("LabelGenerator", () => {
 
     expect(
       (screen.getByLabelText(/horizontal offset/i) as HTMLInputElement).value,
-    ).toBe("4");
+    ).toBe("0");
     expect(
       (screen.getByLabelText(/vertical offset/i) as HTMLInputElement).value,
-    ).toBe("-1.8");
+    ).toBe("0");
   });
 
   test("uses the edited evaluation form offsets when generating forms", async () => {
@@ -299,6 +367,10 @@ describe("LabelGenerator", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /options/i }));
+    await user.selectOptions(
+      screen.getByLabelText(/form layout/i),
+      "legacy",
+    );
     await user.clear(screen.getByLabelText(/horizontal offset/i));
     await user.type(screen.getByLabelText(/horizontal offset/i), "5.5");
     fireEvent.change(screen.getByLabelText(/vertical offset/i), {
@@ -311,6 +383,7 @@ describe("LabelGenerator", () => {
       expect(generateFormPdfSpy).toHaveBeenCalledWith(
         expect.any(Array),
         expect.objectContaining({
+          layout: "legacy",
           globalOffsetMm: { x: 5.5, y: -2.4 },
         }),
       );

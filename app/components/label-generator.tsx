@@ -10,21 +10,41 @@ import {
   type ReactNode,
 } from "react";
 import {
-  FORM_GLOBAL_OFFSET_MM,
+  DEFAULT_FORM_LAYOUT,
+  FORM_LAYOUT_IDS,
+  FORM_LAYOUT_NAMES,
   generateFormPdf,
   generateLabelPdf,
+  getDefaultFormOffsetMm,
+  getRequiredCsvHeaderDisplayNames,
   LABEL_LAYOUT_CONFIG,
   prepareLabelsForOutput,
-  REQUIRED_CSV_HEADER_DISPLAY_NAMES,
+  type CsvPreparationInput,
   type FormCoordinateOffset,
+  type FormLayoutId,
   type PreparedLabelResult,
 } from "@/lib/labels";
 
 type ParsedCsvRow = Record<string, string | undefined>;
 
+type FormOffsetsByLayout = Record<FormLayoutId, FormCoordinateOffset>;
+
+const DEFAULT_FORM_OFFSETS: FormOffsetsByLayout = {
+  valuation: getDefaultFormOffsetMm("valuation"),
+  legacy: getDefaultFormOffsetMm("legacy"),
+};
+
+const PREPRINTED_FORM_URLS: Record<FormLayoutId, string> = {
+  valuation: "/hgm-valuation-form-26.pdf",
+  legacy: "/hgm-pack-form-26.pdf",
+};
+
 export default function LabelGenerator() {
   const generatedLabelsRef = useRef<HTMLElement | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>("");
+  const [parsedCsv, setParsedCsv] = useState<CsvPreparationInput | null>(
+    null,
+  );
   const [result, setResult] = useState<PreparedLabelResult | null>(null);
   const [blockingError, setBlockingError] = useState<string | null>(null);
   const [parserWarnings, setParserWarnings] = useState<string[]>([]);
@@ -37,10 +57,15 @@ export default function LabelGenerator() {
   );
   const [formPdfFileName, setFormPdfFileName] = useState("hgm-pack-forms.pdf");
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
-  const [savedFormGlobalOffset, setSavedFormGlobalOffset] =
-    useState<FormCoordinateOffset>(FORM_GLOBAL_OFFSET_MM);
-  const [draftFormGlobalOffset, setDraftFormGlobalOffset] =
-    useState<FormCoordinateOffset>(FORM_GLOBAL_OFFSET_MM);
+  const [savedFormLayout, setSavedFormLayout] =
+    useState<FormLayoutId>(DEFAULT_FORM_LAYOUT);
+  const [draftFormLayout, setDraftFormLayout] =
+    useState<FormLayoutId>(DEFAULT_FORM_LAYOUT);
+  const [savedFormOffsets, setSavedFormOffsets] =
+    useState<FormOffsetsByLayout>(DEFAULT_FORM_OFFSETS);
+  const [draftFormOffsets, setDraftFormOffsets] =
+    useState<FormOffsetsByLayout>(DEFAULT_FORM_OFFSETS);
+  const draftFormGlobalOffset = draftFormOffsets[draftFormLayout];
 
   useEffect(() => {
     return () => {
@@ -83,6 +108,7 @@ export default function LabelGenerator() {
     setSelectedFileName(file.name);
     setBlockingError(null);
     setParserWarnings([]);
+    setParsedCsv(null);
     setResult(null);
     setLabelPdfFileName(buildPdfFileName(file.name, "labels"));
     setFormPdfFileName(buildPdfFileName(file.name, "forms"));
@@ -98,24 +124,14 @@ export default function LabelGenerator() {
       const nextWarnings = parsed.errors.map(
         (error) => `Row ${error.row || "unknown"}: ${error.message}`,
       );
-      const nextResult = await prepareLabelsForOutput({
+      const nextParsedCsv = {
         headers: parsed.meta.fields ?? [],
         rows: parsed.data,
-      });
+      };
 
       setParserWarnings(nextWarnings);
-      setResult(nextResult);
-
-      if (nextResult.missingHeaders.length > 0) {
-        setBlockingError(
-          `Missing required columns: ${nextResult.missingHeaders.join(", ")}`,
-        );
-        return;
-      }
-
-      if (nextResult.labels.length === 0) {
-        setBlockingError("No valid labels or forms were found in this CSV.");
-      }
+      setParsedCsv(nextParsedCsv);
+      await prepareCsv(nextParsedCsv, savedFormLayout);
     } catch (error) {
       setBlockingError(
         error instanceof Error ? error.message : "Unable to read this CSV file.",
@@ -123,6 +139,27 @@ export default function LabelGenerator() {
     } finally {
       setIsParsing(false);
     }
+  }
+
+  async function prepareCsv(input: CsvPreparationInput, layout: FormLayoutId) {
+    const nextResult = await prepareLabelsForOutput(input, {
+      formLayout: layout,
+    });
+
+    setResult(nextResult);
+
+    if (nextResult.missingHeaders.length > 0) {
+      setBlockingError(
+        `Missing required columns: ${nextResult.missingHeaders.join(", ")} (needed for the ${FORM_LAYOUT_NAMES[layout]} layout)`,
+      );
+      return;
+    }
+
+    setBlockingError(
+      nextResult.labels.length === 0
+        ? "No valid labels or forms were found in this CSV."
+        : null,
+    );
   }
 
   async function handleGeneratePdfs() {
@@ -141,7 +178,8 @@ export default function LabelGenerator() {
       const [labelPdfBytes, formPdfBytes] = await Promise.all([
         generateLabelPdf(result.labels),
         generateFormPdf(result.forms, {
-          globalOffsetMm: savedFormGlobalOffset,
+          layout: savedFormLayout,
+          globalOffsetMm: savedFormOffsets[savedFormLayout],
         }),
       ]);
       const nextLabelPdfUrl = URL.createObjectURL(
@@ -195,25 +233,38 @@ export default function LabelGenerator() {
   ) {
     const parsedValue = Number.parseFloat(value);
 
-    setDraftFormGlobalOffset((currentOffset) => ({
-      ...currentOffset,
-      [axis]: Number.isFinite(parsedValue) ? parsedValue : 0,
+    setDraftFormOffsets((currentOffsets) => ({
+      ...currentOffsets,
+      [draftFormLayout]: {
+        ...currentOffsets[draftFormLayout],
+        [axis]: Number.isFinite(parsedValue) ? parsedValue : 0,
+      },
     }));
   }
 
   function openOptionsDialog() {
-    setDraftFormGlobalOffset(savedFormGlobalOffset);
+    setDraftFormLayout(savedFormLayout);
+    setDraftFormOffsets(savedFormOffsets);
     setIsOptionsOpen(true);
   }
 
   function closeOptionsDialog() {
-    setDraftFormGlobalOffset(savedFormGlobalOffset);
+    setDraftFormLayout(savedFormLayout);
+    setDraftFormOffsets(savedFormOffsets);
     setIsOptionsOpen(false);
   }
 
-  function saveOptionsDialog() {
-    setSavedFormGlobalOffset(draftFormGlobalOffset);
+  async function saveOptionsDialog() {
+    const layoutChanged = draftFormLayout !== savedFormLayout;
+
+    setSavedFormLayout(draftFormLayout);
+    setSavedFormOffsets(draftFormOffsets);
     setIsOptionsOpen(false);
+
+    if (layoutChanged && parsedCsv) {
+      resetPdfUrls();
+      await prepareCsv(parsedCsv, draftFormLayout);
+    }
   }
 
   return (
@@ -239,7 +290,9 @@ export default function LabelGenerator() {
             </span>
             <span>
               Required columns:{" "}
-              <code>{REQUIRED_CSV_HEADER_DISPLAY_NAMES.join(", ")}</code>
+              <code>
+                {getRequiredCsvHeaderDisplayNames(savedFormLayout).join(", ")}
+              </code>
             </span>
             <input
               id="csv-upload"
@@ -345,7 +398,7 @@ export default function LabelGenerator() {
             <p className="text-sm text-slate-600">
               Check the parsed recipient details before generating the PDFs. The
               label output uses an A4 {LABEL_LAYOUT_CONFIG.columns} x{" "}
-              {LABEL_LAYOUT_CONFIG.rows} sheet with {LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows} labels per page, and the form output creates one A4 page per valid CSV row.
+              {LABEL_LAYOUT_CONFIG.rows} sheet with {LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows} labels per page, and the form output creates one A4 page per valid CSV row for the {FORM_LAYOUT_NAMES[savedFormLayout]}.
             </p>
           </div>
 
@@ -448,7 +501,7 @@ export default function LabelGenerator() {
               a new tab before printing on the{" "}
               <a
                 className="font-medium text-slate-800 underline decoration-slate-300 underline-offset-2 transition hover:text-slate-950 hover:decoration-slate-500"
-                href="/hgm-pack-form-26.pdf"
+                href={PREPRINTED_FORM_URLS[savedFormLayout]}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -480,7 +533,8 @@ export default function LabelGenerator() {
                   Evaluation Form
                 </h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Global offset settings for the preprinted form output.
+                  Layout and global offset settings for the preprinted form
+                  output.
                 </p>
               </div>
               <button
@@ -494,6 +548,23 @@ export default function LabelGenerator() {
             </div>
 
             <div className="mt-5 space-y-4">
+              <label className="block text-sm text-slate-700">
+                <span className="font-medium text-slate-900">Form layout</span>
+                <select
+                  value={draftFormLayout}
+                  onChange={(event) =>
+                    setDraftFormLayout(event.target.value as FormLayoutId)
+                  }
+                  className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                >
+                  {FORM_LAYOUT_IDS.map((layoutId) => (
+                    <option key={layoutId} value={layoutId}>
+                      {FORM_LAYOUT_NAMES[layoutId]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <label className="block text-sm text-slate-700">
                 <span className="font-medium text-slate-900">
                   Horizontal offset (mm)
@@ -527,7 +598,7 @@ export default function LabelGenerator() {
 
             <p className="mt-4 text-xs text-slate-500">
               Positive horizontal values move right. Negative vertical values
-              move up.
+              move up. Each layout keeps its own offsets.
             </p>
 
             <div className="mt-6 flex justify-end">

@@ -4,9 +4,11 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { describe, expect, test } from "vitest";
 import {
   findMissingRequiredHeaders,
-  FORM_GLOBAL_OFFSET_MM,
-  FORM_LAYOUT_CONFIG,
+  FORM_LAYOUTS,
   formatLabelText,
+  getDefaultFormOffsetMm,
+  getRequiredCsvHeaderDisplayNames,
+  getRequiredCsvHeaders,
   getLabelCellPosition,
   getFormCustomerDetailsLines,
   getResolvedFormFieldLayout,
@@ -18,9 +20,12 @@ import {
   normalizeCsvHeader,
   paginateLabels,
   prepareLabelsForOutput,
-  REQUIRED_CSV_HEADERS,
   type AddressLabel,
 } from "@/lib/labels";
+
+const LEGACY_CSV_HEADERS = [...getRequiredCsvHeaders("legacy")];
+const LEGACY_FORM_LAYOUT = FORM_LAYOUTS.legacy;
+const VALUATION_FORM_LAYOUT = FORM_LAYOUTS.valuation;
 
 const COMPLETE_ROW = {
   enquiryid: "449587",
@@ -72,12 +77,47 @@ describe("label utilities", () => {
     expect(missingHeaders).toEqual(["postcode"]);
   });
 
+  test("only requires the legacy price columns for the legacy form layout", () => {
+    const valuationHeaders = [
+      "EnquiryID",
+      "FirstName",
+      "LastName",
+      "Address1",
+      "Address2",
+      "Address3",
+      "Town",
+      "County",
+      "Postcode",
+      "Price",
+    ];
+
+    expect(findMissingRequiredHeaders(valuationHeaders)).toEqual([]);
+    expect(findMissingRequiredHeaders(valuationHeaders, "valuation")).toEqual(
+      [],
+    );
+    expect(findMissingRequiredHeaders(valuationHeaders, "legacy")).toEqual([
+      "9ct",
+      "14ct",
+      "18ct",
+      "22ct",
+      "24ct",
+      "sovereign",
+      "1ozbritiannia",
+      "goldkrugerrand",
+      "returnbydate",
+    ]);
+    expect(getRequiredCsvHeaderDisplayNames("valuation")).toEqual([
+      "EnquiryID",
+      ...valuationHeaders.slice(1),
+    ]);
+  });
+
   test("filters empty rows, creates forms, and collapses blank address lines", async () => {
     const result = await prepareLabelsForOutput({
-      headers: [...REQUIRED_CSV_HEADERS],
+      headers: LEGACY_CSV_HEADERS,
       rows: [
         Object.fromEntries(
-          REQUIRED_CSV_HEADERS.map((header) => [header, ""]),
+          LEGACY_CSV_HEADERS.map((header) => [header, ""]),
         ) as Record<string, string>,
         COMPLETE_ROW,
       ],
@@ -104,6 +144,7 @@ describe("label utilities", () => {
       price: {
         label: "Insurance Value",
         value: "£2,500.00",
+        amount: "2,500.00",
       },
       britiannia: "£3,418.84",
       krugerrand: "£3,381.40",
@@ -122,7 +163,7 @@ describe("label utilities", () => {
 
   test("compacts form customer details before they would overflow into the enquiry id", async () => {
     const result = await prepareLabelsForOutput({
-      headers: [...REQUIRED_CSV_HEADERS],
+      headers: LEGACY_CSV_HEADERS,
       rows: [
         {
           ...COMPLETE_ROW,
@@ -145,7 +186,7 @@ describe("label utilities", () => {
     const lines = getFormCustomerDetailsLines(
       result.forms[0]!.customerDetails,
       font,
-      FORM_LAYOUT_CONFIG.fields.customerDetails,
+      LEGACY_FORM_LAYOUT.fields.customerDetails!,
     );
 
     expect(lines).toEqual([
@@ -157,23 +198,71 @@ describe("label utilities", () => {
     ]);
   });
 
-  test("applies the global form offset and the delivery-date adjustment", () => {
-    const customerDetails = getResolvedFormFieldLayout("customerDetails");
-    const returnByDate = getResolvedFormFieldLayout("returnByDate");
+  test("applies the legacy global form offset and the delivery-date adjustment", () => {
+    const customerDetails = getResolvedFormFieldLayout(
+      "legacy",
+      "customerDetails",
+    )!;
+    const returnByDate = getResolvedFormFieldLayout("legacy", "returnByDate")!;
 
-    expect(FORM_GLOBAL_OFFSET_MM).toEqual({ x: 4, y: -1.8 });
+    expect(getDefaultFormOffsetMm("legacy")).toEqual({ x: 4, y: -1.8 });
     expect(
-      customerDetails.left - FORM_LAYOUT_CONFIG.fields.customerDetails.left,
+      customerDetails.left - LEGACY_FORM_LAYOUT.fields.customerDetails!.left,
     ).toBeCloseTo(4 * (72 / 25.4), 6);
     expect(
-      customerDetails.top - FORM_LAYOUT_CONFIG.fields.customerDetails.top,
+      customerDetails.top - LEGACY_FORM_LAYOUT.fields.customerDetails!.top,
     ).toBeCloseTo(-1.8 * (72 / 25.4), 6);
     expect(
-      returnByDate.left - FORM_LAYOUT_CONFIG.fields.returnByDate.left,
+      returnByDate.left - LEGACY_FORM_LAYOUT.fields.returnByDate!.left,
     ).toBeCloseTo(-2 * (72 / 25.4), 6);
     expect(
-      returnByDate.top - FORM_LAYOUT_CONFIG.fields.returnByDate.top,
+      returnByDate.top - LEGACY_FORM_LAYOUT.fields.returnByDate!.top,
     ).toBeCloseTo(-1.8 * (72 / 25.4), 6);
+  });
+
+  test("maps the A5 valuation form artwork onto the A4 page", () => {
+    const scale = 841.89 / 595.5;
+    const customerDetails = getResolvedFormFieldLayout(
+      "valuation",
+      "customerDetails",
+    )!;
+    const enquiryId = getResolvedFormFieldLayout("valuation", "enquiryId")!;
+    const price = getResolvedFormFieldLayout("valuation", "price")!;
+
+    expect(getDefaultFormOffsetMm()).toEqual({ x: 0, y: 0 });
+    expect(VALUATION_FORM_LAYOUT.pageWidth).toBeCloseTo(595.28, 2);
+    expect(customerDetails.top).toBeCloseTo(122.5 * scale, 6);
+    // Customer details and enquiry ID sit inside the Customer Details panel.
+    expect(customerDetails.left).toBeGreaterThan(21 * scale);
+    expect(enquiryId.top + enquiryId.style.fontSize).toBeLessThan(
+      204.25 * scale,
+    );
+    expect(customerDetails.top + customerDetails.height).toBeLessThan(
+      enquiryId.top,
+    );
+    // The insured value sits inside the "insured up to: £" box.
+    expect(price.left).toBeGreaterThan(119.75 * scale);
+    expect(price.top).toBeGreaterThan(220.75 * scale);
+    expect(price.top + price.style.fontSize).toBeLessThan(245 * scale);
+    expect(getResolvedFormFieldLayout("valuation", "returnByDate")).toBe(
+      undefined,
+    );
+  });
+
+  test("applies a custom offset to the valuation form layout", () => {
+    const price = getResolvedFormFieldLayout("valuation", "price", {
+      x: 1,
+      y: -2,
+    })!;
+
+    expect(price.left - VALUATION_FORM_LAYOUT.fields.price!.left).toBeCloseTo(
+      72 / 25.4,
+      6,
+    );
+    expect(price.top - VALUATION_FORM_LAYOUT.fields.price!.top).toBeCloseTo(
+      -2 * (72 / 25.4),
+      6,
+    );
   });
 
   test("capitalizes manually entered names and address text", () => {
@@ -213,7 +302,7 @@ describe("label utilities", () => {
     }));
 
     const result = await prepareLabelsForOutput({
-      headers: [...REQUIRED_CSV_HEADERS],
+      headers: LEGACY_CSV_HEADERS,
       rows,
     });
 
@@ -227,7 +316,7 @@ describe("label utilities", () => {
 
   test("flags and truncates labels that overflow vertically", async () => {
     const result = await prepareLabelsForOutput({
-      headers: [...REQUIRED_CSV_HEADERS],
+      headers: LEGACY_CSV_HEADERS,
       rows: [
         {
           ...COMPLETE_ROW,
@@ -308,9 +397,35 @@ describe("label utilities", () => {
     expect(pdf.getPageCount()).toBe(1);
   });
 
+  test("prepares valuation forms from a CSV without the legacy price columns", async () => {
+    const result = await prepareLabelsForOutput(
+      {
+        headers: [...getRequiredCsvHeaders("valuation")],
+        rows: [
+          {
+            enquiryid: COMPLETE_ROW.enquiryid,
+            firstname: COMPLETE_ROW.firstname,
+            lastname: COMPLETE_ROW.lastname,
+            address1: COMPLETE_ROW.address1,
+            town: COMPLETE_ROW.town,
+            postcode: COMPLETE_ROW.postcode,
+            price: "750.0000",
+          },
+        ],
+      },
+      { formLayout: "valuation" },
+    );
+
+    expect(result.missingHeaders).toEqual([]);
+    expect(result.forms[0]).toMatchObject({
+      enquiryId: "Enquiry ID: 449587",
+      price: { amount: "750.00" },
+    });
+  });
+
   test("generates a multi-page form PDF with embedded IBM Plex fonts", async () => {
     const result = await prepareLabelsForOutput({
-      headers: [...REQUIRED_CSV_HEADERS],
+      headers: LEGACY_CSV_HEADERS,
       rows: [
         COMPLETE_ROW,
         {
@@ -339,4 +454,35 @@ describe("label utilities", () => {
 
     expect(pdf.getPageCount()).toBe(2);
   });
+
+  test.each(["valuation", "legacy"] as const)(
+    "generates A4 form pages for the %s layout",
+    async (layout) => {
+      const result = await prepareLabelsForOutput({
+        headers: LEGACY_CSV_HEADERS,
+        rows: [COMPLETE_ROW],
+      });
+
+      const pdfBytes = await generateFormPdf(result.forms, {
+        layout,
+        fontData: {
+          regular: readFileSync(
+            join(process.cwd(), "public/fonts/IBMPlexSans-Regular.ttf"),
+          ),
+          medium: readFileSync(
+            join(process.cwd(), "public/fonts/IBMPlexSans-Medium.ttf"),
+          ),
+          bold: readFileSync(
+            join(process.cwd(), "public/fonts/IBMPlexSans-Bold.ttf"),
+          ),
+        },
+      });
+      const pdf = await PDFDocument.load(pdfBytes);
+      const { width, height } = pdf.getPage(0).getSize();
+
+      expect(pdf.getPageCount()).toBe(1);
+      expect(width).toBeCloseTo(595.28, 2);
+      expect(height).toBeCloseTo(841.89, 2);
+    },
+  );
 });

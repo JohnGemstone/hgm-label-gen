@@ -18,9 +18,10 @@ const LABEL_REQUIRED_CSV_HEADERS = [
   "postcode",
 ] as const;
 
-const FORM_REQUIRED_CSV_HEADERS = [
-  "enquiryid",
-  "price",
+const VALUATION_FORM_REQUIRED_CSV_HEADERS = ["enquiryid", "price"] as const;
+
+const LEGACY_FORM_REQUIRED_CSV_HEADERS = [
+  ...VALUATION_FORM_REQUIRED_CSV_HEADERS,
   "9ct",
   "14ct",
   "18ct",
@@ -32,34 +33,67 @@ const FORM_REQUIRED_CSV_HEADERS = [
   "returnbydate",
 ] as const;
 
-export const REQUIRED_CSV_HEADERS = [
-  ...LABEL_REQUIRED_CSV_HEADERS,
-  ...FORM_REQUIRED_CSV_HEADERS,
-] as const;
+export const FORM_LAYOUT_IDS = ["valuation", "legacy"] as const;
 
-export const REQUIRED_CSV_HEADER_DISPLAY_NAMES = [
-  "EnquiryID",
-  "FirstName",
-  "LastName",
-  "Address1",
-  "Address2",
-  "Address3",
-  "Town",
-  "County",
-  "Postcode",
-  "Price",
-  "9ct",
-  "14ct",
-  "18ct",
-  "22ct",
-  "24ct",
-  "Sovereign",
-  "1oz Britiannia",
-  "Gold Krugerrand",
-  "Return By Date",
-] as const;
+export type FormLayoutId = (typeof FORM_LAYOUT_IDS)[number];
 
-export type RequiredCsvHeader = (typeof REQUIRED_CSV_HEADERS)[number];
+export const DEFAULT_FORM_LAYOUT: FormLayoutId = "valuation";
+
+export const FORM_LAYOUT_NAMES: Record<FormLayoutId, string> = {
+  valuation: "Gold Valuation Form",
+  legacy: "Legacy Gold Evaluation Form",
+};
+
+const REQUIRED_CSV_HEADERS_BY_LAYOUT = {
+  valuation: [
+    ...LABEL_REQUIRED_CSV_HEADERS,
+    ...VALUATION_FORM_REQUIRED_CSV_HEADERS,
+  ],
+  legacy: [...LABEL_REQUIRED_CSV_HEADERS, ...LEGACY_FORM_REQUIRED_CSV_HEADERS],
+} as const;
+
+export type RequiredCsvHeader =
+  (typeof REQUIRED_CSV_HEADERS_BY_LAYOUT)[FormLayoutId][number];
+
+const CSV_HEADER_DISPLAY_NAMES: Record<RequiredCsvHeader, string> = {
+  enquiryid: "EnquiryID",
+  firstname: "FirstName",
+  lastname: "LastName",
+  address1: "Address1",
+  address2: "Address2",
+  address3: "Address3",
+  town: "Town",
+  county: "County",
+  postcode: "Postcode",
+  price: "Price",
+  "9ct": "9ct",
+  "14ct": "14ct",
+  "18ct": "18ct",
+  "22ct": "22ct",
+  "24ct": "24ct",
+  sovereign: "Sovereign",
+  "1ozbritiannia": "1oz Britiannia",
+  goldkrugerrand: "Gold Krugerrand",
+  returnbydate: "Return By Date",
+};
+
+export function getRequiredCsvHeaders(
+  layoutId: FormLayoutId = DEFAULT_FORM_LAYOUT,
+): readonly RequiredCsvHeader[] {
+  return REQUIRED_CSV_HEADERS_BY_LAYOUT[layoutId];
+}
+
+export function getRequiredCsvHeaderDisplayNames(
+  layoutId: FormLayoutId = DEFAULT_FORM_LAYOUT,
+): string[] {
+  const requiredHeaders = new Set<RequiredCsvHeader>(
+    getRequiredCsvHeaders(layoutId),
+  );
+
+  return Object.entries(CSV_HEADER_DISPLAY_NAMES)
+    .filter(([header]) => requiredHeaders.has(header as RequiredCsvHeader))
+    .map(([, displayName]) => displayName);
+}
 
 export interface AddressLabel {
   name: string;
@@ -72,6 +106,7 @@ export interface AddressLabel {
 export interface PreparedFormPrice {
   label: string;
   value: string;
+  amount: string;
 }
 
 export interface PreparedFormCustomerDetails {
@@ -142,7 +177,12 @@ type FormFontData = Record<FormFontKey, Uint8Array>;
 
 interface GenerateFormPdfOptions {
   fontData?: Partial<Record<FormFontKey, ArrayBuffer | Uint8Array>>;
+  layout?: FormLayoutId;
   globalOffsetMm?: FormCoordinateOffset;
+}
+
+interface PrepareLabelsOptions {
+  formLayout?: FormLayoutId;
 }
 
 interface GenerateLabelPdfOptions {
@@ -169,26 +209,35 @@ interface FormFieldLayout {
   style: FormTextStyle;
 }
 
+const SINGLE_LINE_FORM_FIELD_NAMES = [
+  "enquiryId",
+  "returnByDate",
+  "nineCt",
+  "fourteenCt",
+  "eighteenCt",
+  "twentyTwoCt",
+  "twentyFourCt",
+  "sovereign",
+  "britiannia",
+  "krugerrand",
+] as const;
+
+type SingleLineFormFieldName = (typeof SINGLE_LINE_FORM_FIELD_NAMES)[number];
+
+type FormFieldName = "customerDetails" | "price" | SingleLineFormFieldName;
+
+type FormFieldLayouts = Partial<Record<FormFieldName, FormFieldLayout>>;
+
 interface FormLayoutConfig {
   pageWidth: number;
   pageHeight: number;
-  fields: {
-    customerDetails: FormFieldLayout;
-    enquiryId: FormFieldLayout;
-    returnByDate: FormFieldLayout;
-    price: FormFieldLayout;
-    nineCt: FormFieldLayout;
-    fourteenCt: FormFieldLayout;
-    eighteenCt: FormFieldLayout;
-    twentyTwoCt: FormFieldLayout;
-    twentyFourCt: FormFieldLayout;
-    sovereign: FormFieldLayout;
-    britiannia: FormFieldLayout;
-    krugerrand: FormFieldLayout;
-  };
+  defaultOffsetMm: FormCoordinateOffset;
+  fieldOffsetsMm: Partial<Record<FormFieldName, FormCoordinateOffset>>;
+  // "labelled" prints "INSURANCE VALUE £750.00"; "amount" prints "750.00"
+  // for stock that already has the label and £ sign preprinted.
+  priceDisplay: "labelled" | "amount";
+  fields: FormFieldLayouts;
 }
-
-type FormFieldName = keyof FormLayoutConfig["fields"];
 
 export interface FormCoordinateOffset {
   x: number;
@@ -215,18 +264,19 @@ const INNER_PADDING = 12;
 const FONT_SIZE = 10;
 const LINE_HEIGHT = 12;
 const SHOW_LABEL_OUTLINES = false;
-export const FORM_GLOBAL_OFFSET_MM: FormCoordinateOffset = {
-  x: 4,
-  y: -1.8,
-};
-const FORM_FIELD_OFFSETS_MM: Partial<
-  Record<FormFieldName, FormCoordinateOffset>
-> = {
-  returnByDate: {
-    x: -6,
-    y: 0,
-  },
-};
+
+// The Gold Valuation Form artwork is A5 and is printed scaled up to fit A4,
+// so its fields are measured in artwork points and mapped onto the A4 page.
+const VALUATION_ARTWORK_WIDTH_PT = 419.25;
+const VALUATION_ARTWORK_HEIGHT_PT = 595.5;
+const VALUATION_ARTWORK_SCALE = Math.min(
+  PAGE_WIDTH_PT / VALUATION_ARTWORK_WIDTH_PT,
+  PAGE_HEIGHT_PT / VALUATION_ARTWORK_HEIGHT_PT,
+);
+const VALUATION_ARTWORK_OFFSET_X =
+  (PAGE_WIDTH_PT - VALUATION_ARTWORK_WIDTH_PT * VALUATION_ARTWORK_SCALE) / 2;
+const VALUATION_ARTWORK_OFFSET_Y =
+  (PAGE_HEIGHT_PT - VALUATION_ARTWORK_HEIGHT_PT * VALUATION_ARTWORK_SCALE) / 2;
 
 const FORM_FONT_PATHS: Record<FormFontKey, string> = {
   regular: "/fonts/IBMPlexSans-Regular.ttf",
@@ -237,6 +287,11 @@ const FORM_FONT_PATHS: Record<FormFontKey, string> = {
 const GBP_FORMATTER = new Intl.NumberFormat("en-GB", {
   style: "currency",
   currency: "GBP",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const AMOUNT_FORMATTER = new Intl.NumberFormat("en-GB", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
@@ -263,9 +318,20 @@ export const LABEL_LAYOUT_CONFIG: LabelLayoutConfig = {
   borderWidth: 0.75,
 };
 
-export const FORM_LAYOUT_CONFIG: FormLayoutConfig = {
+const LEGACY_FORM_LAYOUT: FormLayoutConfig = {
   pageWidth: PAGE_WIDTH_PT,
   pageHeight: PAGE_HEIGHT_PT,
+  defaultOffsetMm: {
+    x: 4,
+    y: -1.8,
+  },
+  fieldOffsetsMm: {
+    returnByDate: {
+      x: -6,
+      y: 0,
+    },
+  },
+  priceDisplay: "labelled",
   fields: {
     customerDetails: {
       left: 33.732,
@@ -404,6 +470,69 @@ export const FORM_LAYOUT_CONFIG: FormLayoutConfig = {
   },
 };
 
+const VALUATION_FORM_LAYOUT: FormLayoutConfig = {
+  pageWidth: PAGE_WIDTH_PT,
+  pageHeight: PAGE_HEIGHT_PT,
+  defaultOffsetMm: {
+    x: 0,
+    y: 0,
+  },
+  fieldOffsetsMm: {},
+  priceDisplay: "amount",
+  fields: {
+    // Customer Details panel: artwork x 21–201.25, y 114.5–204.25.
+    customerDetails: fromValuationArtwork(
+      { left: 29, top: 122.5, width: 164, height: 60 },
+      {
+        fontKey: "medium",
+        fontSize: 10.5,
+        lineHeight: 13.5,
+      },
+    ),
+    enquiryId: fromValuationArtwork(
+      { left: 29, top: 188.8, width: 164, height: 8 },
+      {
+        fontKey: "bold",
+        fontSize: 10.5,
+        lineHeight: 13.5,
+      },
+    ),
+    // "Insured up to: £" box interior: artwork x 119.75–183.25, y 220.75–245.
+    price: fromValuationArtwork(
+      { left: 124.75, top: 226, width: 53.5, height: 15 },
+      {
+        fontKey: "medium",
+        fontSize: 15,
+        lineHeight: 18,
+      },
+    ),
+  },
+};
+
+export const FORM_LAYOUTS: Record<FormLayoutId, FormLayoutConfig> = {
+  valuation: VALUATION_FORM_LAYOUT,
+  legacy: LEGACY_FORM_LAYOUT,
+};
+
+export function getDefaultFormOffsetMm(
+  layoutId: FormLayoutId = DEFAULT_FORM_LAYOUT,
+): FormCoordinateOffset {
+  return { ...FORM_LAYOUTS[layoutId].defaultOffsetMm };
+}
+
+function fromValuationArtwork(
+  box: { left: number; top: number; width: number; height: number },
+  style: FormTextStyle,
+): FormFieldLayout {
+  return {
+    left: VALUATION_ARTWORK_OFFSET_X + box.left * VALUATION_ARTWORK_SCALE,
+    top: VALUATION_ARTWORK_OFFSET_Y + box.top * VALUATION_ARTWORK_SCALE,
+    width: box.width * VALUATION_ARTWORK_SCALE,
+    height: box.height * VALUATION_ARTWORK_SCALE,
+    style,
+  };
+}
+
 export const LABELS_PER_PAGE =
   LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows;
 
@@ -448,10 +577,11 @@ export function formatLabelText(value: string): string {
 
 export function findMissingRequiredHeaders(
   headers: string[],
+  layoutId: FormLayoutId = DEFAULT_FORM_LAYOUT,
 ): RequiredCsvHeader[] {
   const normalizedHeaders = new Set(headers.map(normalizeCsvHeader));
 
-  return REQUIRED_CSV_HEADERS.filter(
+  return getRequiredCsvHeaders(layoutId).filter(
     (header) => !normalizedHeaders.has(header),
   );
 }
@@ -468,8 +598,12 @@ export function paginateLabels(labels: AddressLabel[]): AddressLabel[][] {
 
 export async function prepareLabelsForOutput(
   input: CsvPreparationInput,
+  options: PrepareLabelsOptions = {},
 ): Promise<PreparedLabelResult> {
-  const missingHeaders = findMissingRequiredHeaders(input.headers);
+  const missingHeaders = findMissingRequiredHeaders(
+    input.headers,
+    options.formLayout,
+  );
 
   if (missingHeaders.length > 0) {
     return {
@@ -587,19 +721,22 @@ export async function generateFormPdf(
   pdf.registerFontkit(fontkit);
 
   const formFonts = await embedFormFonts(pdf, options.fontData);
+  const layoutId = options.layout ?? DEFAULT_FORM_LAYOUT;
+  const layout = FORM_LAYOUTS[layoutId];
+  const fields = getResolvedFormFieldLayouts(
+    layoutId,
+    options.globalOffsetMm,
+  );
   const pagesToRender = forms.length === 0 ? [null] : forms;
 
   for (const form of pagesToRender) {
-    const page = pdf.addPage([
-      FORM_LAYOUT_CONFIG.pageWidth,
-      FORM_LAYOUT_CONFIG.pageHeight,
-    ]);
+    const page = pdf.addPage([layout.pageWidth, layout.pageHeight]);
 
     if (!form) {
       continue;
     }
 
-    drawFormPage(page, form, formFonts, options.globalOffsetMm);
+    drawFormPage(page, form, formFonts, fields, layout.priceDisplay);
   }
 
   const pdfBytes = await pdf.save();
@@ -705,6 +842,7 @@ function createPreparedFormRow(row: Record<string, string>): PreparedFormRow {
     price: {
       label: "Insurance Value",
       value: formatCurrency(row.price ?? ""),
+      amount: formatAmount(row.price ?? ""),
     },
     nineCt: formatCurrency(row["9ct"] ?? ""),
     fourteenCt: formatCurrency(row["14ct"] ?? ""),
@@ -722,6 +860,14 @@ function formatEnquiryId(value: string): string {
 }
 
 function formatCurrency(value: string): string {
+  return formatMoney(value, GBP_FORMATTER);
+}
+
+function formatAmount(value: string): string {
+  return formatMoney(value, AMOUNT_FORMATTER);
+}
+
+function formatMoney(value: string, formatter: Intl.NumberFormat): string {
   const normalized = value.replace(/[^\d,.-]/g, "").trim();
 
   if (!normalized) {
@@ -734,7 +880,7 @@ function formatCurrency(value: string): string {
     return value.trim();
   }
 
-  return GBP_FORMATTER.format(numericValue);
+  return formatter.format(numericValue);
 }
 
 function formatReturnByDate(value: string): string {
@@ -883,54 +1029,67 @@ function drawFormPage(
   page: PDFPage,
   form: PreparedFormRow,
   fonts: Record<FormFontKey, PDFFont>,
-  globalOffsetMm: FormCoordinateOffset = FORM_GLOBAL_OFFSET_MM,
+  fields: FormFieldLayouts,
+  priceDisplay: FormLayoutConfig["priceDisplay"],
 ) {
-  const fields = getResolvedFormFieldLayouts(globalOffsetMm);
+  if (fields.customerDetails) {
+    drawCustomerDetails(
+      page,
+      form.customerDetails,
+      fields.customerDetails,
+      fonts,
+    );
+  }
 
-  drawCustomerDetails(
-    page,
-    form.customerDetails,
-    fields.customerDetails,
-    fonts,
-  );
-  drawSingleLineField(page, form.enquiryId, fields.enquiryId, fonts);
-  drawSingleLineField(page, form.returnByDate, fields.returnByDate, fonts);
-  drawPriceField(page, form.price, fields.price, fonts);
-  drawSingleLineField(page, form.nineCt, fields.nineCt, fonts);
-  drawSingleLineField(page, form.fourteenCt, fields.fourteenCt, fonts);
-  drawSingleLineField(page, form.eighteenCt, fields.eighteenCt, fonts);
-  drawSingleLineField(page, form.twentyTwoCt, fields.twentyTwoCt, fonts);
-  drawSingleLineField(page, form.twentyFourCt, fields.twentyFourCt, fonts);
-  drawSingleLineField(page, form.sovereign, fields.sovereign, fonts);
-  drawSingleLineField(page, form.britiannia, fields.britiannia, fonts);
-  drawSingleLineField(page, form.krugerrand, fields.krugerrand, fonts);
+  for (const fieldName of SINGLE_LINE_FORM_FIELD_NAMES) {
+    const layout = fields[fieldName];
+
+    if (layout) {
+      drawSingleLineField(page, form[fieldName], layout, fonts);
+    }
+  }
+
+  if (fields.price) {
+    if (priceDisplay === "amount") {
+      drawSingleLineField(page, form.price.amount, fields.price, fonts);
+    } else {
+      drawPriceField(page, form.price, fields.price, fonts);
+    }
+  }
 }
 
 function getResolvedFormFieldLayouts(
-  globalOffsetMm: FormCoordinateOffset = FORM_GLOBAL_OFFSET_MM,
-): FormLayoutConfig["fields"] {
-  return {
-    customerDetails: getResolvedFormFieldLayout("customerDetails", globalOffsetMm),
-    enquiryId: getResolvedFormFieldLayout("enquiryId", globalOffsetMm),
-    returnByDate: getResolvedFormFieldLayout("returnByDate", globalOffsetMm),
-    price: getResolvedFormFieldLayout("price", globalOffsetMm),
-    nineCt: getResolvedFormFieldLayout("nineCt", globalOffsetMm),
-    fourteenCt: getResolvedFormFieldLayout("fourteenCt", globalOffsetMm),
-    eighteenCt: getResolvedFormFieldLayout("eighteenCt", globalOffsetMm),
-    twentyTwoCt: getResolvedFormFieldLayout("twentyTwoCt", globalOffsetMm),
-    twentyFourCt: getResolvedFormFieldLayout("twentyFourCt", globalOffsetMm),
-    sovereign: getResolvedFormFieldLayout("sovereign", globalOffsetMm),
-    britiannia: getResolvedFormFieldLayout("britiannia", globalOffsetMm),
-    krugerrand: getResolvedFormFieldLayout("krugerrand", globalOffsetMm),
-  };
+  layoutId: FormLayoutId,
+  globalOffsetMm?: FormCoordinateOffset,
+): FormFieldLayouts {
+  const fields: FormFieldLayouts = {};
+
+  for (const fieldName of Object.keys(
+    FORM_LAYOUTS[layoutId].fields,
+  ) as FormFieldName[]) {
+    fields[fieldName] = getResolvedFormFieldLayout(
+      layoutId,
+      fieldName,
+      globalOffsetMm,
+    );
+  }
+
+  return fields;
 }
 
 export function getResolvedFormFieldLayout(
+  layoutId: FormLayoutId,
   fieldName: FormFieldName,
-  globalOffsetMm: FormCoordinateOffset = FORM_GLOBAL_OFFSET_MM,
-): FormFieldLayout {
-  const layout = FORM_LAYOUT_CONFIG.fields[fieldName];
-  const fieldOffset = FORM_FIELD_OFFSETS_MM[fieldName] ?? { x: 0, y: 0 };
+  globalOffsetMm: FormCoordinateOffset = FORM_LAYOUTS[layoutId].defaultOffsetMm,
+): FormFieldLayout | undefined {
+  const layoutConfig = FORM_LAYOUTS[layoutId];
+  const layout = layoutConfig.fields[fieldName];
+
+  if (!layout) {
+    return undefined;
+  }
+
+  const fieldOffset = layoutConfig.fieldOffsetsMm[fieldName] ?? { x: 0, y: 0 };
 
   return offsetFormFieldLayout(layout, {
     x: globalOffsetMm.x + fieldOffset.x,
@@ -966,7 +1125,7 @@ function drawCustomerDetails(
 export function getFormCustomerDetailsLines(
   details: PreparedFormCustomerDetails,
   font: PDFFont,
-  layout: FormFieldLayout = FORM_LAYOUT_CONFIG.fields.customerDetails,
+  layout: FormFieldLayout,
 ): string[] {
   const maxLineCount = getMaxFormLineCount(layout);
   const baseAddressLines = details.addressLines;
@@ -1023,7 +1182,7 @@ function drawPriceField(
   const valueFont = fonts[layout.style.fontKey];
   const transformedLabel = applyTextTransform(price.label, layout.style);
   const transformedValue = applyTextTransform(price.value, layout.style);
-  const y = toPdfY(layout.top, layout.style.fontSize);
+  const y = toPdfY(page, layout.top, layout.style.fontSize);
 
   page.drawText(transformedLabel, {
     x: layout.left,
@@ -1067,7 +1226,7 @@ function drawText(
 ) {
   page.drawText(applyTextTransform(value, style), {
     x: left,
-    y: toPdfY(top, style.fontSize) - lineIndex * style.lineHeight,
+    y: toPdfY(page, top, style.fontSize) - lineIndex * style.lineHeight,
     size: style.fontSize,
     font,
     color: rgb(0, 0, 0),
@@ -1078,8 +1237,8 @@ function applyTextTransform(value: string, style: FormTextStyle): string {
   return style.uppercase ? value.toUpperCase() : value;
 }
 
-function toPdfY(top: number, fontSize: number): number {
-  return FORM_LAYOUT_CONFIG.pageHeight - top - fontSize;
+function toPdfY(page: PDFPage, top: number, fontSize: number): number {
+  return page.getHeight() - top - fontSize;
 }
 
 function mmToPoints(value: number): number {
