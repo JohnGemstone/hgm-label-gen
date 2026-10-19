@@ -231,6 +231,7 @@ type FormFieldLayouts = Partial<Record<FormFieldName, FormFieldLayout>>;
 interface FormLayoutConfig {
   pageWidth: number;
   pageHeight: number;
+  pageSizeName: "A4" | "A5";
   defaultOffsetMm: FormCoordinateOffset;
   fieldOffsetsMm: Partial<Record<FormFieldName, FormCoordinateOffset>>;
   // "labelled" prints "INSURANCE VALUE £750.00"; "amount" prints "750.00"
@@ -265,18 +266,10 @@ const FONT_SIZE = 10;
 const LINE_HEIGHT = 12;
 const SHOW_LABEL_OUTLINES = false;
 
-// The Gold Valuation Form artwork is A5 and is printed scaled up to fit A4,
-// so its fields are measured in artwork points and mapped onto the A4 page.
-const VALUATION_ARTWORK_WIDTH_PT = 419.25;
-const VALUATION_ARTWORK_HEIGHT_PT = 595.5;
-const VALUATION_ARTWORK_SCALE = Math.min(
-  PAGE_WIDTH_PT / VALUATION_ARTWORK_WIDTH_PT,
-  PAGE_HEIGHT_PT / VALUATION_ARTWORK_HEIGHT_PT,
-);
-const VALUATION_ARTWORK_OFFSET_X =
-  (PAGE_WIDTH_PT - VALUATION_ARTWORK_WIDTH_PT * VALUATION_ARTWORK_SCALE) / 2;
-const VALUATION_ARTWORK_OFFSET_Y =
-  (PAGE_HEIGHT_PT - VALUATION_ARTWORK_HEIGHT_PT * VALUATION_ARTWORK_SCALE) / 2;
+// The Gold Valuation Form is printed on A5 stock, so its fields are measured
+// directly in points from the top-left of the A5 artwork.
+const A5_PAGE_WIDTH_PT = 148 * POINTS_PER_MM;
+const A5_PAGE_HEIGHT_PT = 210 * POINTS_PER_MM;
 
 const FORM_FONT_PATHS: Record<FormFontKey, string> = {
   regular: "/fonts/IBMPlexSans-Regular.ttf",
@@ -321,6 +314,7 @@ export const LABEL_LAYOUT_CONFIG: LabelLayoutConfig = {
 const LEGACY_FORM_LAYOUT: FormLayoutConfig = {
   pageWidth: PAGE_WIDTH_PT,
   pageHeight: PAGE_HEIGHT_PT,
+  pageSizeName: "A4",
   defaultOffsetMm: {
     x: 4,
     y: -1.8,
@@ -471,8 +465,9 @@ const LEGACY_FORM_LAYOUT: FormLayoutConfig = {
 };
 
 const VALUATION_FORM_LAYOUT: FormLayoutConfig = {
-  pageWidth: PAGE_WIDTH_PT,
-  pageHeight: PAGE_HEIGHT_PT,
+  pageWidth: A5_PAGE_WIDTH_PT,
+  pageHeight: A5_PAGE_HEIGHT_PT,
+  pageSizeName: "A5",
   defaultOffsetMm: {
     x: 0,
     y: 0,
@@ -480,32 +475,41 @@ const VALUATION_FORM_LAYOUT: FormLayoutConfig = {
   fieldOffsetsMm: {},
   priceDisplay: "amount",
   fields: {
-    // Customer Details panel: artwork x 21–201.25, y 114.5–204.25.
-    customerDetails: fromValuationArtwork(
-      { left: 29, top: 122.5, width: 164, height: 60 },
-      {
+    // Customer Details panel: x 21–201.25, y 114.5–204.25.
+    customerDetails: {
+      left: 29,
+      top: 122.5,
+      width: 164,
+      height: 60,
+      style: {
         fontKey: "medium",
-        fontSize: 10.5,
-        lineHeight: 13.5,
+        fontSize: 7.5,
+        lineHeight: 9.5,
       },
-    ),
-    enquiryId: fromValuationArtwork(
-      { left: 29, top: 188.8, width: 164, height: 8 },
-      {
+    },
+    enquiryId: {
+      left: 29,
+      top: 188.8,
+      width: 164,
+      height: 8,
+      style: {
         fontKey: "bold",
-        fontSize: 10.5,
-        lineHeight: 13.5,
+        fontSize: 7.5,
+        lineHeight: 9.5,
       },
-    ),
-    // "Insured up to: £" box interior: artwork x 119.75–183.25, y 220.75–245.
-    price: fromValuationArtwork(
-      { left: 124.75, top: 226, width: 53.5, height: 15 },
-      {
+    },
+    // "Insured up to: £" box interior: x 119.75–183.25, y 220.75–245.
+    price: {
+      left: 124.75,
+      top: 226,
+      width: 53.5,
+      height: 11,
+      style: {
         fontKey: "medium",
-        fontSize: 15,
-        lineHeight: 18,
+        fontSize: 10.5,
+        lineHeight: 12.5,
       },
-    ),
+    },
   },
 };
 
@@ -518,19 +522,6 @@ export function getDefaultFormOffsetMm(
   layoutId: FormLayoutId = DEFAULT_FORM_LAYOUT,
 ): FormCoordinateOffset {
   return { ...FORM_LAYOUTS[layoutId].defaultOffsetMm };
-}
-
-function fromValuationArtwork(
-  box: { left: number; top: number; width: number; height: number },
-  style: FormTextStyle,
-): FormFieldLayout {
-  return {
-    left: VALUATION_ARTWORK_OFFSET_X + box.left * VALUATION_ARTWORK_SCALE,
-    top: VALUATION_ARTWORK_OFFSET_Y + box.top * VALUATION_ARTWORK_SCALE,
-    width: box.width * VALUATION_ARTWORK_SCALE,
-    height: box.height * VALUATION_ARTWORK_SCALE,
-    style,
-  };
 }
 
 export const LABELS_PER_PAGE =

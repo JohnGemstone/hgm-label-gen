@@ -220,8 +220,7 @@ describe("label utilities", () => {
     ).toBeCloseTo(-1.8 * (72 / 25.4), 6);
   });
 
-  test("maps the A5 valuation form artwork onto the A4 page", () => {
-    const scale = 841.89 / 595.5;
+  test("places the valuation form fields on an A5 page", () => {
     const customerDetails = getResolvedFormFieldLayout(
       "valuation",
       "customerDetails",
@@ -230,20 +229,20 @@ describe("label utilities", () => {
     const price = getResolvedFormFieldLayout("valuation", "price")!;
 
     expect(getDefaultFormOffsetMm()).toEqual({ x: 0, y: 0 });
-    expect(VALUATION_FORM_LAYOUT.pageWidth).toBeCloseTo(595.28, 2);
-    expect(customerDetails.top).toBeCloseTo(122.5 * scale, 6);
+    expect(VALUATION_FORM_LAYOUT.pageSizeName).toBe("A5");
+    expect(VALUATION_FORM_LAYOUT.pageWidth).toBeCloseTo(419.53, 2);
+    expect(VALUATION_FORM_LAYOUT.pageHeight).toBeCloseTo(595.28, 2);
     // Customer details and enquiry ID sit inside the Customer Details panel.
-    expect(customerDetails.left).toBeGreaterThan(21 * scale);
-    expect(enquiryId.top + enquiryId.style.fontSize).toBeLessThan(
-      204.25 * scale,
-    );
+    expect(customerDetails.left).toBeGreaterThan(21);
+    expect(customerDetails.top).toBeGreaterThan(114.5);
+    expect(enquiryId.top + enquiryId.style.fontSize).toBeLessThan(204.25);
     expect(customerDetails.top + customerDetails.height).toBeLessThan(
       enquiryId.top,
     );
     // The insured value sits inside the "insured up to: £" box.
-    expect(price.left).toBeGreaterThan(119.75 * scale);
-    expect(price.top).toBeGreaterThan(220.75 * scale);
-    expect(price.top + price.style.fontSize).toBeLessThan(245 * scale);
+    expect(price.left).toBeGreaterThan(119.75);
+    expect(price.top).toBeGreaterThan(220.75);
+    expect(price.top + price.style.fontSize).toBeLessThan(245);
     expect(getResolvedFormFieldLayout("valuation", "returnByDate")).toBe(
       undefined,
     );
@@ -455,9 +454,12 @@ describe("label utilities", () => {
     expect(pdf.getPageCount()).toBe(2);
   });
 
-  test.each(["valuation", "legacy"] as const)(
-    "generates A4 form pages for the %s layout",
-    async (layout) => {
+  test.each([
+    ["valuation", "A5", 419.53, 595.28],
+    ["legacy", "A4", 595.28, 841.89],
+  ] as const)(
+    "generates form pages for the %s layout at %s",
+    async (layout, _pageSizeName, expectedWidth, expectedHeight) => {
       const result = await prepareLabelsForOutput({
         headers: LEGACY_CSV_HEADERS,
         rows: [COMPLETE_ROW],
@@ -481,8 +483,8 @@ describe("label utilities", () => {
       const { width, height } = pdf.getPage(0).getSize();
 
       expect(pdf.getPageCount()).toBe(1);
-      expect(width).toBeCloseTo(595.28, 2);
-      expect(height).toBeCloseTo(841.89, 2);
+      expect(width).toBeCloseTo(expectedWidth, 2);
+      expect(height).toBeCloseTo(expectedHeight, 2);
     },
   );
 });

@@ -13,6 +13,7 @@ import {
   DEFAULT_FORM_LAYOUT,
   FORM_LAYOUT_IDS,
   FORM_LAYOUT_NAMES,
+  FORM_LAYOUTS,
   generateFormPdf,
   generateLabelPdf,
   getDefaultFormOffsetMm,
@@ -398,7 +399,7 @@ export default function LabelGenerator() {
             <p className="text-sm text-slate-600">
               Check the parsed recipient details before generating the PDFs. The
               label output uses an A4 {LABEL_LAYOUT_CONFIG.columns} x{" "}
-              {LABEL_LAYOUT_CONFIG.rows} sheet with {LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows} labels per page, and the form output creates one A4 page per valid CSV row for the {FORM_LAYOUT_NAMES[savedFormLayout]}.
+              {LABEL_LAYOUT_CONFIG.rows} sheet with {LABEL_LAYOUT_CONFIG.columns * LABEL_LAYOUT_CONFIG.rows} labels per page, and the form output creates one {FORM_LAYOUTS[savedFormLayout].pageSizeName} page per valid CSV row for the {FORM_LAYOUT_NAMES[savedFormLayout]}.
             </p>
           </div>
 
